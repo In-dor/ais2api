@@ -1,0 +1,35 @@
+# 使用推荐的 Docker Compose 文件版本
+version: '3.8'
+
+services:
+  # 定义我们的主服务，可以任意命名，这里使用 ais2api
+  ais2api:
+    # 容器名称，对应脚本中的 CONTAINER_NAME
+    container_name: ais2api
+    
+    # 使用的镜像，对应脚本中的 IMAGE_NAME
+    image: ellinalopez/cloud-studio:latest
+    
+    # 重启策略，对应脚本中的 --restart unless-stopped
+    restart: unless-stopped
+    
+    # 端口映射，对应脚本中的 -p "${HOST_PORT}:7860"
+    # 我们使用环境变量 ${HOST_PORT} 来实现动态配置，默认值为 8889
+    ports:
+      - "${HOST_PORT:-8889}:7860"
+      
+    # 环境变量文件，对应脚本中的 --env-file "$ENV_FILE"
+    env_file:
+      - app.env
+      
+    # 挂载卷，对应脚本中对 ./auth 目录的处理
+    # 注意：Compose 会在启动时自动创建 ./auth 目录（如果不存在）
+    volumes:
+      - ./auth:/app/auth
+      
+    # 环境变量，对应脚本中的代理配置
+    # 这些变量的值将从 .env 文件或宿主环境中读取
+    environment:
+      - HTTP_PROXY=${PROXY_URL}
+      - HTTPS_PROXY=${PROXY_URL}
+
