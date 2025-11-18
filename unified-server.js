@@ -2276,27 +2276,15 @@ class ProxyServerSystem extends EventEmitter {
 <span class="label">流模式</span>: ${
         config.streamingMode
       } (仅启用流式传输时生效)
-<span class="label">立即切换 (状态码)</span>: ${
-        config.immediateSwitchStatusCodes.length > 0
-          ? `[${config.immediateSwitchStatusCodes.join(", ")}]`
-          : "已禁用"
-      }
+<span class="label">立即切换 (状态码)</span>: ${config.immediateSwitchStatusCodes.length > 0 ? `[${config.immediateSwitchStatusCodes.join(", ")}]` : "已禁用"}
 <span class="label">API 密钥</span>: ${config.apiKeySource}
 --- 账号状态 ---
 <span class="label">当前使用账号</span>: #${requestHandler.currentAuthIndex}
-<span class="label">使用次数计数</span>: ${requestHandler.usageCount} / ${
-        config.switchOnUses > 0 ? config.switchOnUses : "N/A"
-      }
-<span class="label">连续失败计数</span>: ${requestHandler.failureCount} / ${
-        config.failureThreshold > 0 ? config.failureThreshold : "N/A"
-      }
-<span class="label">扫描到的总帐号</span>: [${initialIndices.join(
-        ", "
-      )}] (总数: ${initialIndices.length})
+<span class="label">使用次数计数</span>: ${requestHandler.usageCount} / ${config.switchOnUses > 0 ? config.switchOnUses : "N/A"}
+<span class="label">连续失败计数</span>: ${requestHandler.failureCount} / ${config.failureThreshold > 0 ? config.failureThreshold : "N/A"}
+<span class="label">扫描到的总帐号</span>: [${initialIndices.join(", ")}] (总数: ${initialIndices.length})
       ${accountDetailsHtml}
-<span class="label">格式错误 (已忽略)</span>: [${invalidIndices.join(
-        ", "
-      )}] (总数: ${invalidIndices.length})
+<span class="label">格式错误 (已忽略)</span>: [${invalidIndices.join(", ")}] (总数: ${invalidIndices.length})
             </pre>
         </div>
         <div id="log-section" style="margin-top: 2em;">
@@ -2366,9 +2354,7 @@ class ProxyServerSystem extends EventEmitter {
         }
 
         function toggleStreamingMode() { 
-            const newMode = prompt('请输入新的流模式 (real 或 fake):', '${
-              this.config.streamingMode
-            }');
+            const newMode = prompt('请输入新的流模式 (real 或 fake):', '${this.config.streamingMode}');
             if (newMode === 'fake' || newMode === 'real') {
                 fetch('/api/set-mode', { 
                     method: 'POST', 
