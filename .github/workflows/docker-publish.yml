@@ -29,13 +29,17 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Convert repository name to lowercase
+        id: repo_name
+        run: echo "name=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
       - name: Build and push Docker image to GHCR
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ghcr.io/${{ github.repository }}:latest
+          tags: ghcr.io/${{ steps.repo_name.outputs.name }}:latest
           build-args: |
             CAMOUFOX_URL=${{ env.CAMOUFOX_URL }}
           # 缓存功能现在可以正常工作了
