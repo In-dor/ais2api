@@ -19,7 +19,7 @@ class AuthSource {
     this.logger = logger;
     this.authMode = "file";
     this.availableIndices = [];
-    this.initialIndices = []; // 新增：用于存储初步发现的所有索引
+    this.initialIndices = [];
     this.accountNameMap = new Map();
 
     if (process.env.AUTH_JSON_1) {
@@ -989,6 +989,17 @@ class RequestHandler {
     const isOpenAIStream = req.body.stream === true;
     const model = req.body.model || "gemini-1.5-pro-latest";
 
+    if (this.config.switchOnUses > 0) {
+      this.usageCount++;
+      this.logger.info(
+        `[Request] OpenAI生成请求 - 账号轮换计数: ${this.usageCount}/${this.config.switchOnUses} (当前账号: ${this.currentAuthIndex})`
+      );
+      if (this.usageCount >= this.config.switchOnUses) {
+        // 对于 OpenAI 请求，也标记为请求后需要切换
+        this.needsSwitchingAfterRequest = true;
+      }
+    }
+
     // 1. 翻译请求体 (逻辑保持不变)
     let googleBody;
     try {
@@ -1172,6 +1183,15 @@ class RequestHandler {
       this._handleRequestError(error, res);
     } finally {
       this.connectionRegistry.removeMessageQueue(requestId);
+      if (this.needsSwitchingAfterRequest) {
+        this.logger.info(
+          `[Auth] OpenAI轮换计数已达到切换阈值 (${this.usageCount}/${this.config.switchOnUses})，将在后台自动切换账号...`
+        );
+        this._switchToNextAuth().catch((err) => {
+          this.logger.error(`[Auth] 后台账号切换任务失败: ${err.message}`);
+        });
+        this.needsSwitchingAfterRequest = false;
+      }
       if (!res.writableEnded) {
         res.end();
       }
@@ -2233,33 +2253,12 @@ class ProxyServerSystem extends EventEmitter {
         .action-group button { background-color: #007bff; color: white; border-color: #007bff; }
         .action-group select { background-color: #ffffff; color: #000000; -webkit-appearance: none; appearance: none; }
         @media (max-width: 600px) {
-            body { 
-                padding: 0.5em; /* 减小页面整体的边距 */
-            }
-            .container {
-                /* 关键：减小白色卡片的左右内边距，让它更宽 */
-                padding: 1em; 
-                margin: 0;
-            }
-            pre {
-                /* 关键：减小黑色代码框的内边距 */
-                padding: 1em;
-                font-size: 0.9em; /* 让字体稍微小一点，容纳更多内容 */
-            }
-            .label {
-                /* 关键：移除固定的 220px 宽度，让标签宽度自动适应 */
-                width: auto; 
-                /* 并且，我们不再需要它是一个'块'，让它和文本流在一起 */
-                display: inline;
-            }
-            .action-group {
-                flex-direction: column; /* 让操作按钮垂直堆叠 */
-                align-items: stretch; /* 让按钮占满宽度 */
-            }
-            .action-group select, .action-group button {
-                width: 100%;
-                box-sizing: border-box; 
-            }
+            body { padding: 0.5em; }
+            .container { padding: 1em; margin: 0; }
+            pre { padding: 1em; font-size: 0.9em; }
+            .label { width: auto; display: inline; }
+            .action-group { flex-direction: column; align-items: stretch; }
+            .action-group select, .action-group button { width: 100%; box-sizing: border-box; }
         }
         </style>
     </head>
@@ -2357,14 +2356,14 @@ class ProxyServerSystem extends EventEmitter {
             .then(res => res.text()).then(data => { alert(data); updateContent(); })
             .catch(err => { 
                 if (err.message.includes('Load failed') || err.message.includes('NetworkError')) {
-                    alert('⚠️ 浏览器启动较慢，操作仍在后台进行中。\n\n请不要重复点击。');
+                    alert('⚠️ 浏览器启动较慢，操作仍在后台进行中。\\n\\n请不要重复点击。');
                 } else {
                     alert('❌ 操作失败: ' + err); 
                 }
                 updateContent(); 
             });
         }
-
+            
         function toggleStreamingMode() { 
             const newMode = prompt('请输入新的流模式 (real 或 fake):', '${
               this.config.streamingMode
@@ -2553,3 +2552,4 @@ if (require.main === module) {
 }
 
 module.exports = { ProxyServerSystem, BrowserManager, initializeServer };
+
