@@ -1,42 +1,68 @@
-# .github/workflows/docker-publish.yml (最终修正版)
+# .github/workflows/docker-publish.yml
 name: Build and Push Docker Image
 
 on:
-  push:
-    branches: ["main"] # 当 main 分支有更新时触发
+  # 移除了 push 触发器，改为手动触发
+  workflow_dispatch:
+    inputs:
+      # 定义一个输入框，让您在运行时输入版本号
+      version:
+        description: "Docker image version tag (e.g., v1.0, v1.1-alpha)"
+        required: true
+        default: "v2"
+      # 定义一个复选框，让您决定是否更新 latest 标签
+      update_latest:
+        description: 'Update the "latest" tag as well?'
+        type: boolean
+        default: false
 
 jobs:
   build_and_push:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
+        # 需要获取你手动运行时所在的分支（通常是main）
         uses: actions/checkout@v4
 
       - name: Get Camoufox Download URL
         id: get_camoufox_url
         run: |
-          URL=$(curl -s "https://api.github.com/repos/${{ github.repository }}/releases/latest" | grep "browser_download_url.*camoufox-linux.tar.gz" | cut -d : -f 2,3 | tr -d '", ')
+          URL=$(curl -sL "https://api.github.com/repos/${{ github.repository }}/releases/latest" | jq -r '.assets[] | select(.name=="camoufox-linux.tar.gz") | .browser_download_url')
           echo "CAMOUFOX_URL=$URL" >> $GITHUB_ENV
 
-      - name: Log in to Docker Hub
+      - name: Log in to the GitHub Container Registry
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      # --- 新增：设置一个支持缓存的 Docker Buildx 构建器 ---
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push Docker image
+      - name: Convert repository name to lowercase
+        id: repo_name
+        run: echo "name=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ steps.repo_name.outputs.name }}
+          tags: |
+            type=raw,value=${{ github.event.inputs.version }}
+            type=raw,value=latest,enable=${{ github.event.inputs.update_latest }}
+
+      - name: Build and push Docker image to GHCR
+        id: build-and-push
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ellinalopez/cloud-studio:latest
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             CAMOUFOX_URL=${{ env.CAMOUFOX_URL }}
-          # 缓存功能现在可以正常工作了
           cache-from: type=gha
           cache-to: type=gha,mode=max
