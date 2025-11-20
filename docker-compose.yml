@@ -16,7 +16,7 @@ services:
     # 端口映射，对应脚本中的 -p "${HOST_PORT}:7860"
     # 默认值为 8889
     ports:
-      - "8889:7860"
+      - "7862:7860"
       
     # 环境变量文件，对应脚本中的 --env-file "$ENV_FILE"
     env_file:
@@ -29,6 +29,7 @@ services:
       
     # 环境变量，对应脚本中的代理配置
     environment:
-      - HTTP_PROXY="http:192.168.31.198:12156"
-      - HTTPS_PROXY="http:192.168.31.198:12156"
+      - HTTP_PROXY=http://192.168.31.198:12156
+      - HTTPS_PROXY=http://192.168.31.198:12156
+      - TZ=Asia/Shanghai
 
