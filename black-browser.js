@@ -237,6 +237,16 @@ class RequestProcessor {
             if (bodyObj.generationConfig.stopSequences && !Array.isArray(bodyObj.generationConfig.stopSequences)) {
                 bodyObj.generationConfig.stopSequences = [bodyObj.generationConfig.stopSequences];
             }
+            
+            // [核心修复] 移除 Roo Code 发送的 thinkingConfig / thinking_budget
+            // 原因：Gemini 3 Pro 不允许混用 thinking_budget，或者 Roo Code 发送的配置与 API 不兼容。
+            // 既然 OpenAI 模式(不带此参数)能通，说明直接删除它是最安全的。
+            if (bodyObj.generationConfig.thinkingConfig) {
+                delete bodyObj.generationConfig.thinkingConfig;
+            }
+            // 清理 Roo Code 可能放在外层的 thinking_budget（如果存在）
+            if (bodyObj.thinking_budget) delete bodyObj.thinking_budget;
+
             // 清洗 null/undefined 值
             Object.keys(bodyObj.generationConfig).forEach(key => {
                 if (bodyObj.generationConfig[key] === null || bodyObj.generationConfig[key] === undefined) {
@@ -248,8 +258,6 @@ class RequestProcessor {
         // ============================================================
         // 2. 搜索工具兼容性升级 (针对 Cherry Studio)
         // ============================================================
-        // 策略：将旧版 'googleSearchRetrieval' 统一升级为新版 'googleSearch'
-        // 兼容性：Gemini 2.5 Pro (支持两者), Gemini 3 Pro (仅支持新版) -> 改为新版全兼容
         if (bodyObj.tools && Array.isArray(bodyObj.tools)) {
             bodyObj.tools.forEach(tool => {
                 if (tool.googleSearchRetrieval) {
@@ -260,7 +268,7 @@ class RequestProcessor {
         }
 
         // ============================================================
-        // 3. 图片模型特殊处理 (保留原有逻辑)
+        // 3. 图片模型特殊处理
         // ============================================================
         const isImageModel =
           requestSpec.path.includes("-image-") ||
