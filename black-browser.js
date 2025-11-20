@@ -230,24 +230,34 @@ class RequestProcessor {
         let bodyObj = JSON.parse(requestSpec.body);
 
         // ============================================================
-        // 1. 通用修复：数据清洗 (针对 Roo Code 等)
+        // 🕵️ 侦探模式：在清洗前，拦截并打印原始数据
+        // ============================================================
+        if (requestSpec.path.includes("gemini-3")) {
+            if (bodyObj.generationConfig) {
+                // 打印整个 generationConfig，这样我们既能看到 thinkingConfig，也能看到 topK 是否为 null
+                Logger.output("🕵️ [侦探模式] 拦截到 Roo Code 原始配置:", JSON.stringify(bodyObj.generationConfig));
+            } else {
+                Logger.output("🕵️ [侦探模式] Roo Code 未发送 generationConfig");
+            }
+        }
+
+        // ============================================================
+        // 1. 通用修复：数据清洗
         // ============================================================
         if (bodyObj.generationConfig) {
-            // 修复 stopSequences 类型 (Str -> Array)
+            // 修复 stopSequences
             if (bodyObj.generationConfig.stopSequences && !Array.isArray(bodyObj.generationConfig.stopSequences)) {
                 bodyObj.generationConfig.stopSequences = [bodyObj.generationConfig.stopSequences];
             }
             
-            // [核心修复] 移除 Roo Code 发送的 thinkingConfig / thinking_budget
-            // 原因：Gemini 3 Pro 不允许混用 thinking_budget，或者 Roo Code 发送的配置与 API 不兼容。
-            // 既然 OpenAI 模式(不带此参数)能通，说明直接删除它是最安全的。
+            // 核心修复：移除 thinkingConfig
             if (bodyObj.generationConfig.thinkingConfig) {
+                 Logger.output("🧹 [清理] 检测到可能冲突的 thinkingConfig，正在移除..."); // 可选：记录清理动作
                 delete bodyObj.generationConfig.thinkingConfig;
             }
-            // 清理 Roo Code 可能放在外层的 thinking_budget（如果存在）
             if (bodyObj.thinking_budget) delete bodyObj.thinking_budget;
 
-            // 清洗 null/undefined 值
+            // 清洗 null 值
             Object.keys(bodyObj.generationConfig).forEach(key => {
                 if (bodyObj.generationConfig[key] === null || bodyObj.generationConfig[key] === undefined) {
                     delete bodyObj.generationConfig[key];
@@ -256,7 +266,7 @@ class RequestProcessor {
         }
 
         // ============================================================
-        // 2. 搜索工具兼容性升级 (针对 Cherry Studio)
+        // 2. 搜索工具兼容性升级
         // ============================================================
         if (bodyObj.tools && Array.isArray(bodyObj.tools)) {
             bodyObj.tools.forEach(tool => {
