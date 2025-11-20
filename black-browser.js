@@ -229,13 +229,80 @@ class RequestProcessor {
       try {
         let bodyObj = JSON.parse(requestSpec.body);
 
-        // --- 模块1：智能过滤 (保留) ---
+        // ============================================================
+        // 1. 通用修复：数据清洗 & 类型修正
+        // ============================================================
+        if (bodyObj.generationConfig) {
+            // 修复 stopSequences 类型 (String -> Array)
+            if (bodyObj.generationConfig.stopSequences && !Array.isArray(bodyObj.generationConfig.stopSequences)) {
+                bodyObj.generationConfig.stopSequences = [bodyObj.generationConfig.stopSequences];
+            }
+
+            // [核心修复] Thinking Config 智能适配
+            if (bodyObj.generationConfig.thinkingConfig) {
+                const tc = bodyObj.generationConfig.thinkingConfig;
+
+                // A. 驼峰转下划线 (CamelCase -> Snake_case)
+                // Roo Code 发送的是 JS 风格 (thinkingLevel)，Google API 需要下划线 (thinking_level)
+
+                // 1. 转换 thinkingLevel
+                if (tc.thinkingLevel) {
+                    tc.thinking_level = tc.thinkingLevel;
+                    delete tc.thinkingLevel;
+                }
+                
+                // 2. 转换 thinkingBudget
+                if (tc.thinkingBudget) {
+                    tc.thinking_budget = tc.thinkingBudget;
+                    delete tc.thinkingBudget;
+                }
+
+                // 3. 转换 includeThoughts (确保能看到思维链)
+                if (tc.includeThoughts !== undefined) {
+                    tc.include_thoughts = tc.includeThoughts;
+                    delete tc.includeThoughts;
+                }
+
+                // B. 解决参数冲突
+                // Google 文档要求：不要在同一请求中同时使用 thinking_level 和 thinking_budget
+                if (tc.thinking_level && tc.thinking_budget) {
+                    // 如果两者都存在，优先保留新的 Level，删除旧的 Budget 以防报错 400
+                    delete tc.thinking_budget;
+                }
+            }
+            
+            // 清理外层可能存在的遗留参数 (Roo Code 有时会乱放)
+            if (bodyObj.thinking_budget) delete bodyObj.thinking_budget;
+
+            // 清洗 null/undefined 值
+            Object.keys(bodyObj.generationConfig).forEach(key => {
+                if (bodyObj.generationConfig[key] === null || bodyObj.generationConfig[key] === undefined) {
+                    delete bodyObj.generationConfig[key];
+                }
+            });
+        }
+
+        // ============================================================
+        // 2. 搜索工具兼容性升级 (针对 Cherry Studio 等)
+        // ============================================================
+        if (bodyObj.tools && Array.isArray(bodyObj.tools)) {
+            bodyObj.tools.forEach(tool => {
+                if (tool.googleSearchRetrieval) {
+                    delete tool.googleSearchRetrieval;
+                    tool.googleSearch = {};
+                }
+            });
+        }
+
+        // ============================================================
+        // 3. 图片模型特殊处理 (保持原样)
+        // ============================================================
         const isImageModel =
           requestSpec.path.includes("-image-") ||
           requestSpec.path.includes("imagen");
 
         if (isImageModel) {
-          const incompatibleKeys = ["tool_config", "toolChoice", "tools"];
+          const incompatibleKeys = ["tool_config", "toolChoice", "tools", "thinking_config"];
           incompatibleKeys.forEach((key) => {
             if (bodyObj.hasOwnProperty(key)) delete bodyObj[key];
           });
