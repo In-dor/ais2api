@@ -229,13 +229,45 @@ class RequestProcessor {
       try {
         let bodyObj = JSON.parse(requestSpec.body);
 
-        // --- 模块1：智能过滤 (保留) ---
+        // ============================================================
+        // 1. 通用修复：数据清洗 (针对 Roo Code 等)
+        // ============================================================
+        if (bodyObj.generationConfig) {
+            // 修复 stopSequences 类型 (Str -> Array)
+            if (bodyObj.generationConfig.stopSequences && !Array.isArray(bodyObj.generationConfig.stopSequences)) {
+                bodyObj.generationConfig.stopSequences = [bodyObj.generationConfig.stopSequences];
+            }
+            // 清洗 null/undefined 值
+            Object.keys(bodyObj.generationConfig).forEach(key => {
+                if (bodyObj.generationConfig[key] === null || bodyObj.generationConfig[key] === undefined) {
+                    delete bodyObj.generationConfig[key];
+                }
+            });
+        }
+
+        // ============================================================
+        // 2. 搜索工具兼容性升级 (针对 Cherry Studio)
+        // ============================================================
+        // 策略：将旧版 'googleSearchRetrieval' 统一升级为新版 'googleSearch'
+        // 兼容性：Gemini 2.5 Pro (支持两者), Gemini 3 Pro (仅支持新版) -> 改为新版全兼容
+        if (bodyObj.tools && Array.isArray(bodyObj.tools)) {
+            bodyObj.tools.forEach(tool => {
+                if (tool.googleSearchRetrieval) {
+                    delete tool.googleSearchRetrieval;
+                    tool.googleSearch = {};
+                }
+            });
+        }
+
+        // ============================================================
+        // 3. 图片模型特殊处理 (保留原有逻辑)
+        // ============================================================
         const isImageModel =
           requestSpec.path.includes("-image-") ||
           requestSpec.path.includes("imagen");
 
         if (isImageModel) {
-          const incompatibleKeys = ["tool_config", "toolChoice", "tools"];
+          const incompatibleKeys = ["tool_config", "toolChoice", "tools", "thinking_config"];
           incompatibleKeys.forEach((key) => {
             if (bodyObj.hasOwnProperty(key)) delete bodyObj[key];
           });
