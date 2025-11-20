@@ -1,4 +1,5 @@
 # .github/workflows/docker-publish.yml
+# .github/workflows/docker-publish.yml
 name: Build and Push Docker Image
 
 on:
@@ -66,3 +67,12 @@ jobs:
             CAMOUFOX_URL=${{ env.CAMOUFOX_URL }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # 新增步骤：如果勾选了 "update_latest"，则把刚才的镜像也打上 latest 标签
+      - name: Tag and push latest
+        # 使用 if 条件判断是否运行此步骤
+        if: github.event.inputs.update_latest == true
+        run: |
+          IMAGE_ID=$(docker inspect --format='{{.Id}}' ellinalopez/cloud-studio:${{ github.event.inputs.version }})
+          docker tag $IMAGE_ID ellinalopez/cloud-studio:latest
+          docker push ellinalopez/cloud-studio:latest
