@@ -224,7 +224,7 @@ class BrowserManager {
         args: this.launchArgs,
       });
       this.browser.on("disconnected", () => {
-        this.logger.error("❌ [Browser] 浏览器意外断开连接！(可能是资源不足)");
+        this.logger.error("❌ [Browser] 浏览器意外断开连接！");
         this.browser = null;
         this.context = null;
         this.page = null;
@@ -1211,15 +1211,25 @@ class RequestHandler {
               "[Adapter] 从 parts.inlineData 中成功解析到图片。"
             );
           } else {
-            responseContent =
-              candidate.content.parts
-                .map((p) => {
-                  if (p.thought) {
-                    return `<think>\n${p.text}\n</think>\n`;
-                  }
-                  return p.text;
-                })
-                .join("\n") || "";
+            let mainContent = "";
+            let reasoningContent = "";
+
+            candidate.content.parts.forEach((p) => {
+              if (p.thought) {
+                reasoningContent += p.text;
+              } else {
+                mainContent += p.text;
+              }
+            });
+
+            responseContent = mainContent;
+            var messageObj = {
+              role: "assistant",
+              content: responseContent,
+            };
+            if (reasoningContent) {
+              messageObj.reasoning_content = reasoningContent;
+            }
           }
         }
 
@@ -1231,8 +1241,9 @@ class RequestHandler {
           choices: [
             {
               index: 0,
-              message: { role: "assistant", content: responseContent },
-              finish_reason: candidate?.finishReason || "UNKNOWN",
+              // 使用上面构建的 messageObj
+              message: messageObj || { role: "assistant", content: "" },
+              finish_reason: candidate?.finishReason,
             },
           ],
         };
@@ -1359,7 +1370,7 @@ class RequestHandler {
     });
     const connectionMaintainer = setInterval(() => {
       if (!res.writableEnded) res.write(": keep-alive\n\n");
-    }, 15000);
+    }, 3000);
 
     try {
       let lastMessage,
@@ -1809,20 +1820,61 @@ class RequestHandler {
     };
 
     const extraBody = openaiBody.extra_body || {};
-    let thinkingConfig =
+    let rawThinkingConfig =
+      extraBody.google?.thinking_config ||
+      extraBody.google?.thinkingConfig ||
       extraBody.thinkingConfig ||
+      extraBody.thinking_config ||
       openaiBody.thinkingConfig ||
       openaiBody.thinking_config;
 
+    let thinkingConfig = null;
+
+    if (rawThinkingConfig) {
+      // 2. 格式清洗：将 snake_case (下划线) 转换为 camelCase (驼峰)
+      thinkingConfig = {};
+
+      // 处理开关
+      if (rawThinkingConfig.include_thoughts !== undefined) {
+        thinkingConfig.includeThoughts = rawThinkingConfig.include_thoughts;
+      } else if (rawThinkingConfig.includeThoughts !== undefined) {
+        thinkingConfig.includeThoughts = rawThinkingConfig.includeThoughts;
+      }
+
+      // 处理 Budget (预算)
+      // if (rawThinkingConfig.thinking_budget !== undefined) {
+      // thinkingConfig.thinkingBudgetTokenLimit =
+      // rawThinkingConfig.thinking_budget;
+      //} else if (rawThinkingConfig.thinkingBudget !== undefined) {
+      //thinkingConfig.thinkingBudgetTokenLimit =
+      //rawThinkingConfig.thinkingBudget;
+      //}
+
+      this.logger.info(
+        `[Adapter] 成功提取并转换推理配置: ${JSON.stringify(thinkingConfig)}`
+      );
+    }
+
+    // 3. 如果没找到配置，尝试识别 OpenAI 标准参数 'reasoning_effort'
+    if (!thinkingConfig) {
+      const effort = openaiBody.reasoning_effort || extraBody.reasoning_effort;
+      if (effort) {
+        this.logger.info(
+          `[Adapter] 检测到 OpenAI 标准推理参数 (reasoning_effort: ${effort})，自动转换为 Google 格式。`
+        );
+        thinkingConfig = { includeThoughts: true };
+      }
+    }
+
+    // 4. 强制开启逻辑 (WebUI开关)
     if (this.serverSystem.forceThinking && !thinkingConfig) {
       this.logger.info(
         "[Adapter] ⚠️ 强制推理已启用，且客户端未提供配置，正在注入 thinkingConfig..."
       );
       thinkingConfig = { includeThoughts: true };
-    } else if (thinkingConfig) {
-      this.logger.info("[Adapter] ✅ 检测到客户端自带推理配置，将透传该配置。");
     }
 
+    // 5. 写入最终配置
     if (thinkingConfig) {
       generationConfig.thinkingConfig = thinkingConfig;
     }
@@ -1841,11 +1893,7 @@ class RequestHandler {
     return googleRequest;
   }
 
-  _translateGoogleToOpenAIStream(
-    googleChunk,
-    modelName = "gemini-pro",
-    streamState = {}
-  ) {
+  _translateGoogleToOpenAIStream(googleChunk, modelName = "gemini-pro") {
     if (!googleChunk || googleChunk.trim() === "") {
       return null;
     }
@@ -1887,33 +1935,43 @@ class RequestHandler {
       return null;
     }
 
-    let content = "";
+    const delta = {};
+
     if (candidate.content && Array.isArray(candidate.content.parts)) {
       const imagePart = candidate.content.parts.find((p) => p.inlineData);
+
       if (imagePart) {
-        // 发现图片数据，生成完整的 Markdown 字符串
         const image = imagePart.inlineData;
-        content = `![Generated Image](data:${image.mimeType};base64,${image.data})`;
+        delta.content = `![Generated Image](data:${image.mimeType};base64,${image.data})`;
         this.logger.info("[Adapter] 从流式响应块中成功解析到图片。");
       } else {
-        for (const part of candidate.content.parts) {
-          const text = part.text || "";
-          const isThought = part.thought === true;
+        // 遍历所有部分，分离思考内容和正文内容
+        let contentAccumulator = "";
+        let reasoningAccumulator = "";
 
-          if (isThought && !streamState.inThought) {
-            content += "<think>\n" + text;
-            streamState.inThought = true;
-          } else if (!isThought && streamState.inThought) {
-            content += "\n</think>\n" + text;
-            streamState.inThought = false;
+        for (const part of candidate.content.parts) {
+          // Google API 的 thought 标记
+          if (part.thought === true) {
+            reasoningAccumulator += part.text || "";
           } else {
-            content += text;
+            contentAccumulator += part.text || "";
           }
+        }
+
+        // 只有当有内容时才添加到 delta 中
+        if (reasoningAccumulator) {
+          delta.reasoning_content = reasoningAccumulator;
+        }
+        if (contentAccumulator) {
+          delta.content = contentAccumulator;
         }
       }
     }
 
-    const finishReason = candidate.finishReason;
+    // 如果没有任何内容变更，则不返回数据（避免空行）
+    if (!delta.content && !delta.reasoning_content && !candidate.finishReason) {
+      return null;
+    }
 
     const openaiResponse = {
       id: `chatcmpl-${this._generateRequestId()}`,
@@ -1923,8 +1981,8 @@ class RequestHandler {
       choices: [
         {
           index: 0,
-          delta: { content: content },
-          finish_reason: finishReason || null,
+          delta: delta, // 使用包含 reasoning_content 的 delta
+          finish_reason: candidate.finishReason || null,
         },
       ],
     };
@@ -2660,9 +2718,7 @@ class ProxyServerSystem extends EventEmitter {
       const data = {
         status: {
           streamingMode: `${this.streamingMode} (仅启用流式传输时生效)`,
-          forceThinking: this.forceThinking
-            ? "✅ 已启用 (ON)"
-            : "❌ 已关闭 (OFF)",
+          forceThinking: this.forceThinking ? "✅ 已启用" : "❌ 已关闭",
           browserConnected: !!browserManager.browser,
           immediateSwitchStatusCodes:
             config.immediateSwitchStatusCodes.length > 0
@@ -2745,7 +2801,7 @@ class ProxyServerSystem extends EventEmitter {
 
     app.post("/api/toggle-force-thinking", isAuthenticated, (req, res) => {
       this.forceThinking = !this.forceThinking;
-      const statusText = this.forceThinking ? "已启用 (ON)" : "已关闭 (OFF)";
+      const statusText = this.forceThinking ? "已启用" : "已关闭";
       this.logger.info(`[WebUI] 强制推理开关已切换为: ${statusText}`);
       res.status(200).send(`强制推理模式: ${statusText}`);
     });
