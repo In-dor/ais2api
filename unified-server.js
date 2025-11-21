@@ -1123,16 +1123,36 @@ class RequestHandler {
         if (useRealStream) {
           this.logger.info(`[Adapter] OpenAI 流式响应 (Real Mode) 已启动...`);
           let lastGoogleChunk = "";
+          const streamState = { inThought: false };
+
           while (true) {
-            const message = await messageQueue.dequeue(300000);
+            const message = await messageQueue.dequeue(300000); // 5分钟超时
             if (message.type === "STREAM_END") {
+              if (streamState.inThought) {
+                const closeThoughtPayload = {
+                  id: `chatcmpl-${requestId}`,
+                  object: "chat.completion.chunk",
+                  created: Math.floor(Date.now() / 1000),
+                  model: model,
+                  choices: [
+                    {
+                      index: 0,
+                      delta: { content: "\n</think>\n" },
+                      finish_reason: null,
+                    },
+                  ],
+                };
+                res.write(`data: ${JSON.stringify(closeThoughtPayload)}\n\n`);
+              }
               res.write("data: [DONE]\n\n");
               break;
             }
             if (message.data) {
+              // [修改] 将 streamState 传递给翻译函数
               const translatedChunk = this._translateGoogleToOpenAIStream(
                 message.data,
-                model
+                model,
+                streamState
               );
               if (translatedChunk) {
                 res.write(translatedChunk);
@@ -1192,7 +1212,14 @@ class RequestHandler {
             );
           } else {
             responseContent =
-              candidate.content.parts.map((p) => p.text).join("\n") || "";
+              candidate.content.parts
+                .map((p) => {
+                  if (p.thought) {
+                    return `<think>\n${p.text}\n</think>\n`;
+                  }
+                  return p.text;
+                })
+                .join("\n") || "";
           }
         }
 
@@ -1260,10 +1287,34 @@ class RequestHandler {
     return `${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
   }
   _buildProxyRequest(req, requestId) {
-    let requestBody = "";
-    if (req.body) {
-      requestBody = JSON.stringify(req.body);
+    let bodyObj = req.body;
+    if (
+      this.serverSystem.forceThinking &&
+      req.method === "POST" &&
+      bodyObj &&
+      bodyObj.contents
+    ) {
+      if (!bodyObj.generationConfig) {
+        bodyObj.generationConfig = {};
+      }
+
+      if (!bodyObj.generationConfig.thinkingConfig) {
+        this.logger.info(
+          `[Proxy] ⚠️ (Google原生格式) 强制推理已启用，且客户端未提供配置，正在注入 thinkingConfig...`
+        );
+        bodyObj.generationConfig.thinkingConfig = { includeThoughts: true };
+      } else {
+        this.logger.info(
+          `[Proxy] ✅ (Google原生格式) 检测到客户端自带推理配置，跳过强制注入。`
+        );
+      }
     }
+
+    let requestBody = "";
+    if (bodyObj) {
+      requestBody = JSON.stringify(bodyObj);
+    }
+
     return {
       path: req.path,
       method: req.method,
@@ -1756,6 +1807,26 @@ class RequestHandler {
       maxOutputTokens: openaiBody.max_tokens,
       stopSequences: openaiBody.stop,
     };
+
+    const extraBody = openaiBody.extra_body || {};
+    let thinkingConfig =
+      extraBody.thinkingConfig ||
+      openaiBody.thinkingConfig ||
+      openaiBody.thinking_config;
+
+    if (this.serverSystem.forceThinking && !thinkingConfig) {
+      this.logger.info(
+        "[Adapter] ⚠️ 强制推理已启用，且客户端未提供配置，正在注入 thinkingConfig..."
+      );
+      thinkingConfig = { includeThoughts: true };
+    } else if (thinkingConfig) {
+      this.logger.info("[Adapter] ✅ 检测到客户端自带推理配置，将透传该配置。");
+    }
+
+    if (thinkingConfig) {
+      generationConfig.thinkingConfig = thinkingConfig;
+    }
+
     googleRequest.generationConfig = generationConfig;
 
     // 5. 安全设置
@@ -1770,7 +1841,11 @@ class RequestHandler {
     return googleRequest;
   }
 
-  _translateGoogleToOpenAIStream(googleChunk, modelName = "gemini-pro") {
+  _translateGoogleToOpenAIStream(
+    googleChunk,
+    modelName = "gemini-pro",
+    streamState = {}
+  ) {
     if (!googleChunk || googleChunk.trim() === "") {
       return null;
     }
@@ -1812,7 +1887,6 @@ class RequestHandler {
       return null;
     }
 
-    // [核心修正] 引入与非流式一致的图片和文本解析逻辑
     let content = "";
     if (candidate.content && Array.isArray(candidate.content.parts)) {
       const imagePart = candidate.content.parts.find((p) => p.inlineData);
@@ -1822,8 +1896,20 @@ class RequestHandler {
         content = `![Generated Image](data:${image.mimeType};base64,${image.data})`;
         this.logger.info("[Adapter] 从流式响应块中成功解析到图片。");
       } else {
-        // 没有图片，则按原样拼接文本
-        content = candidate.content.parts.map((p) => p.text).join("") || "";
+        for (const part of candidate.content.parts) {
+          const text = part.text || "";
+          const isThought = part.thought === true;
+
+          if (isThought && !streamState.inThought) {
+            content += "<think>\n" + text;
+            streamState.inThought = true;
+          } else if (!isThought && streamState.inThought) {
+            content += "\n</think>\n" + text;
+            streamState.inThought = false;
+          } else {
+            content += text;
+          }
+        }
       }
     }
 
@@ -1853,6 +1939,8 @@ class ProxyServerSystem extends EventEmitter {
     this.logger = new LoggingService("ProxySystem");
     this._loadConfiguration(); // 这个函数会执行下面的_loadConfiguration
     this.streamingMode = this.config.streamingMode;
+
+    this.forceThinking = false;
 
     this.authSource = new AuthSource(this.logger);
     this.browserManager = new BrowserManager(
@@ -2313,6 +2401,9 @@ class ProxyServerSystem extends EventEmitter {
 <span class="label">流模式</span>: ${
         config.streamingMode
       } (仅启用流式传输时生效)
+<span class="label">强制推理</span>: ${
+        this.forceThinking ? "✅ 已启用 (ON)" : "❌ 已关闭 (OFF)"
+      }
 <span class="label">立即切换 (状态码)</span>: ${
         config.immediateSwitchStatusCodes.length > 0
           ? `[${config.immediateSwitchStatusCodes.join(", ")}]`
@@ -2346,6 +2437,7 @@ class ProxyServerSystem extends EventEmitter {
                 <select id="accountIndexSelect">${accountOptionsHtml}</select>
                 <button onclick="switchSpecificAccount()">切换账号</button>
                 <button onclick="toggleStreamingMode()">切换流模式</button>
+                <button onclick="toggleForceThinking()">切换强制推理</button>
             </div>
         </div>
         </div>
@@ -2361,6 +2453,7 @@ class ProxyServerSystem extends EventEmitter {
                     '<span class="label">浏览器连接</span>: <span class="' + (data.status.browserConnected ? "status-ok" : "status-error") + '">' + data.status.browserConnected + '</span>\\n' +
                     '--- 服务配置 ---\\n' +
                     '<span class="label">流模式</span>: ' + data.status.streamingMode + '\\n' +
+                    '<span class="label">强制推理</span>: ' + data.status.forceThinking + '\\n' +
                     '<span class="label">立即切换 (状态码)</span>: ' + data.status.immediateSwitchStatusCodes + '\\n' +
                     '<span class="label">API 密钥</span>: ' + data.status.apiKeySource + '\\n' +
                     '--- 账号状态 ---\\n' +
@@ -2419,6 +2512,15 @@ class ProxyServerSystem extends EventEmitter {
             } 
         }
 
+        function toggleForceThinking() {
+            fetch('/api/toggle-force-thinking', { 
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(res => res.text()).then(data => { alert(data); updateContent(); })
+            .catch(err => alert('设置失败: ' + err));
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
             updateContent(); 
             setInterval(updateContent, 5000);
@@ -2449,6 +2551,9 @@ class ProxyServerSystem extends EventEmitter {
       const data = {
         status: {
           streamingMode: `${this.streamingMode} (仅启用流式传输时生效)`,
+          forceThinking: this.forceThinking
+            ? "✅ 已启用 (ON)"
+            : "❌ 已关闭 (OFF)",
           browserConnected: !!browserManager.browser,
           immediateSwitchStatusCodes:
             config.immediateSwitchStatusCodes.length > 0
@@ -2528,6 +2633,14 @@ class ProxyServerSystem extends EventEmitter {
         res.status(400).send('无效模式. 请用 "fake" 或 "real".');
       }
     });
+
+    app.post("/api/toggle-force-thinking", isAuthenticated, (req, res) => {
+      this.forceThinking = !this.forceThinking;
+      const statusText = this.forceThinking ? "已启用 (ON)" : "已关闭 (OFF)";
+      this.logger.info(`[WebUI] 强制推理开关已切换为: ${statusText}`);
+      res.status(200).send(`强制推理模式: ${statusText}`);
+    });
+
     app.use(this._createAuthMiddleware());
 
     app.get("/v1/models", (req, res) => {
@@ -2589,4 +2702,3 @@ if (require.main === module) {
 }
 
 module.exports = { ProxyServerSystem, BrowserManager, initializeServer };
-
