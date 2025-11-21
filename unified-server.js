@@ -471,14 +471,34 @@ class LoggingService {
   constructor(serviceName = "ProxyServer") {
     this.serviceName = serviceName;
     this.logBuffer = []; // 用于在内存中保存日志
-    this.maxBufferSize = 100; // 最多保存100条
+    this.maxBufferSize = 200; // 最多保存200条
+    // 定义ANSI颜色代码
+    this.colors = {
+      reset: "\x1b[0m",
+      info: "\x1b[36m", // 青色
+      error: "\x1b[31m", // 红色
+      warn: "\x1b[33m", // 黄色
+      debug: "\x1b[90m", // 灰色
+    };
+  }
+
+  _getTimestamp() {
+    const now = new Date();
+    const pad = (n) => n.toString().padStart(2, "0");
+    const pad3 = (n) => n.toString().padStart(3, "0");
+    return (
+      `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ` +
+      `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(
+        now.getSeconds()
+      )}.${pad3(now.getMilliseconds())}`
+    );
   }
 
   _formatMessage(level, message) {
-    const timestamp = new Date().toISOString();
+    const timestamp = this._getTimestamp();
     const formatted = `[${level}] ${timestamp} [${this.serviceName}] - ${message}`;
 
-    // 将格式化后的日志存入缓冲区
+    // 将格式化后的日志存入缓冲区 (存入无颜色版本，供WebUI显示)
     this.logBuffer.push(formatted);
     // 如果缓冲区超过最大长度，则从头部删除旧的日志
     if (this.logBuffer.length > this.maxBufferSize) {
@@ -489,16 +509,20 @@ class LoggingService {
   }
 
   info(message) {
-    console.log(this._formatMessage("INFO", message));
+    const formatted = this._formatMessage("INFO", message);
+    console.log(`${this.colors.info}${formatted}${this.colors.reset}`);
   }
   error(message) {
-    console.error(this._formatMessage("ERROR", message));
+    const formatted = this._formatMessage("ERROR", message);
+    console.error(`${this.colors.error}${formatted}${this.colors.reset}`);
   }
   warn(message) {
-    console.warn(this._formatMessage("WARN", message));
+    const formatted = this._formatMessage("WARN", message);
+    console.warn(`${this.colors.warn}${formatted}${this.colors.reset}`);
   }
   debug(message) {
-    console.debug(this._formatMessage("DEBUG", message));
+    const formatted = this._formatMessage("DEBUG", message);
+    console.debug(`${this.colors.debug}${formatted}${this.colors.reset}`);
   }
 }
 
