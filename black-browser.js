@@ -230,34 +230,36 @@ class RequestProcessor {
         let bodyObj = JSON.parse(requestSpec.body);
 
         // ============================================================
-        // 🕵️ 侦探模式：在清洗前，拦截并打印原始数据
-        // ============================================================
-        if (requestSpec.path.includes("gemini-3")) {
-            if (bodyObj.generationConfig) {
-                // 打印整个 generationConfig，这样我们既能看到 thinkingConfig，也能看到 topK 是否为 null
-                Logger.output("🕵️ [侦探模式] 拦截到 Roo Code 原始配置:", JSON.stringify(bodyObj.generationConfig));
-            } else {
-                Logger.output("🕵️ [侦探模式] Roo Code 未发送 generationConfig");
-            }
+        // 🕵️ [可选] 侦探模式日志 (你可以保留着用来观察，也可以删掉)
+        if (requestSpec.path.includes("gemini-3") && bodyObj.generationConfig?.thinkingConfig) {
+             Logger.output("🕵️ [侦探模式] 修正前的思考配置:", JSON.stringify(bodyObj.generationConfig.thinkingConfig));
         }
+        // ============================================================
 
         // ============================================================
         // 1. 通用修复：数据清洗
         // ============================================================
         if (bodyObj.generationConfig) {
-            // 修复 stopSequences
+            // [1.1] 修复 stopSequences (Str -> Array)
             if (bodyObj.generationConfig.stopSequences && !Array.isArray(bodyObj.generationConfig.stopSequences)) {
                 bodyObj.generationConfig.stopSequences = [bodyObj.generationConfig.stopSequences];
             }
             
-            // 核心修复：移除 thinkingConfig
+            // [1.2] 精准修复 thinkingConfig (只删报错的，保留 includeThoughts)
             if (bodyObj.generationConfig.thinkingConfig) {
-                 Logger.output("🧹 [清理] 检测到可能冲突的 thinkingConfig，正在移除..."); // 可选：记录清理动作
-                delete bodyObj.generationConfig.thinkingConfig;
+                // ❌ 删除会导致 400 报错的参数
+                delete bodyObj.generationConfig.thinkingConfig.thinkingLevel;   // 罪魁祸首：驼峰命名 Google 不认
+                delete bodyObj.generationConfig.thinkingConfig.thinking_level;  // 既然默认是 High，删了也没事，用默认值更稳
+
+                // ✅ 特意保留：includeThoughts
+                // 如果 Roo Code 发了 includeThoughts: true，这一行会保留下来
+                // Google 收到 { "includeThoughts": true } 就会返回思维链了
             }
+            
+            // [1.3] 清理外层的旧参数
             if (bodyObj.thinking_budget) delete bodyObj.thinking_budget;
 
-            // 清洗 null 值
+            // [1.4] 必须做的：清洗 null 值
             Object.keys(bodyObj.generationConfig).forEach(key => {
                 if (bodyObj.generationConfig[key] === null || bodyObj.generationConfig[key] === undefined) {
                     delete bodyObj.generationConfig[key];
@@ -266,7 +268,7 @@ class RequestProcessor {
         }
 
         // ============================================================
-        // 2. 搜索工具兼容性升级
+        // 2. 搜索工具兼容性升级 (Cherry Studio)
         // ============================================================
         if (bodyObj.tools && Array.isArray(bodyObj.tools)) {
             bodyObj.tools.forEach(tool => {
