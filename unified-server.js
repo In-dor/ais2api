@@ -494,35 +494,35 @@ class LoggingService {
     );
   }
 
-  _formatMessage(level, message) {
+  _emit(level, message, color) {
     const timestamp = this._getTimestamp();
-    const formatted = `[${level}] ${timestamp} [${this.serviceName}] - ${message}`;
+    const prefix = `[${level}] ${timestamp} [${this.serviceName}] - `;
 
-    // 将格式化后的日志存入缓冲区 (存入无颜色版本，供WebUI显示)
-    this.logBuffer.push(formatted);
-    // 如果缓冲区超过最大长度，则从头部删除旧的日志
+    // 1. 存入缓冲区 (纯文本)
+    this.logBuffer.push(prefix + message);
     if (this.logBuffer.length > this.maxBufferSize) {
       this.logBuffer.shift();
     }
 
-    return formatted;
+    // 2. 控制台输出 (仅前缀有颜色，内容保持原色)
+    const output = `${color}${prefix}${this.colors.reset}${message}`;
+    if (level === "ERROR") console.error(output);
+    else if (level === "WARN") console.warn(output);
+    else if (level === "DEBUG") console.debug(output);
+    else console.log(output);
   }
 
   info(message) {
-    const formatted = this._formatMessage("INFO", message);
-    console.log(`${this.colors.info}${formatted}${this.colors.reset}`);
+    this._emit("INFO", message, this.colors.info);
   }
   error(message) {
-    const formatted = this._formatMessage("ERROR", message);
-    console.error(`${this.colors.error}${formatted}${this.colors.reset}`);
+    this._emit("ERROR", message, this.colors.error);
   }
   warn(message) {
-    const formatted = this._formatMessage("WARN", message);
-    console.warn(`${this.colors.warn}${formatted}${this.colors.reset}`);
+    this._emit("WARN", message, this.colors.warn);
   }
   debug(message) {
-    const formatted = this._formatMessage("DEBUG", message);
-    console.debug(`${this.colors.debug}${formatted}${this.colors.reset}`);
+    this._emit("DEBUG", message, this.colors.debug);
   }
 }
 
