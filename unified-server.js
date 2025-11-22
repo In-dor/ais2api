@@ -2758,7 +2758,7 @@ class ProxyServerSystem extends EventEmitter {
                 // Update Config
                 document.getElementById('config-body').innerHTML =
                     renderInfoRow('流式模式', data.status.streamingMode.split(' ')[0]) +
-                    renderInfoRow('强制返回思维链', data.status.forceThinking.includes('ON') ? '✅ 开启' : '❌ 关闭') +
+                    renderInfoRow('强制返回思维链', data.status.forceThinking) +
                     renderInfoRow('API认证', data.status.apiKeySource);
 
                 // Update Stats
