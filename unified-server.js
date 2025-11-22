@@ -163,6 +163,86 @@ class AuthSource {
     }
   }
 }
+
+// ===================================================================================
+// STATISTICS MANAGEMENT MODULE
+// ===================================================================================
+
+class StatsManager {
+  constructor(logger) {
+    this.logger = logger;
+    this.statsFilePath = path.join(__dirname, "daily_stats.json");
+    this.stats = {};
+    this._loadStats();
+  }
+
+  _loadStats() {
+    try {
+      if (fs.existsSync(this.statsFilePath)) {
+        const data = fs.readFileSync(this.statsFilePath, "utf-8");
+        this.stats = JSON.parse(data);
+      }
+    } catch (error) {
+      this.logger.error(`[Stats] 加载统计文件失败: ${error.message}`);
+      this.stats = {};
+    }
+  }
+
+  _saveStats() {
+    try {
+      fs.writeFileSync(this.statsFilePath, JSON.stringify(this.stats, null, 2));
+    } catch (error) {
+      this.logger.error(`[Stats] 保存统计文件失败: ${error.message}`);
+    }
+  }
+
+  _getTodayDateString() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  incrementDailyUsage() {
+    const today = this._getTodayDateString();
+    if (!this.stats[today]) {
+      this.stats[today] = 0;
+    }
+    this.stats[today]++;
+    this._saveStats();
+    return this.stats[today];
+  }
+
+  getStats(days = 7) {
+    const result = [];
+    const today = new Date();
+
+    for (let i = days - 1; i >= 0; i--) {
+      const date = new Date(today);
+      date.setDate(today.getDate() - i);
+      
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      const dateString = `${year}-${month}-${day}`;
+
+      result.push({
+        date: dateString,
+        count: this.stats[dateString] || 0
+      });
+    }
+    
+    // Add today's count if not already covered (though logic above covers it)
+    // Also return total count for today separately for quick access
+    const todayStr = this._getTodayDateString();
+    
+    return {
+      daily: result,
+      today: this.stats[todayStr] || 0
+    };
+  }
+}
 // ===================================================================================
 // BROWSER MANAGEMENT MODULE
 // ===================================================================================
@@ -689,7 +769,8 @@ class RequestHandler {
     logger,
     browserManager,
     config,
-    authSource
+    authSource,
+    statsManager
   ) {
     this.serverSystem = serverSystem;
     this.connectionRegistry = connectionRegistry;
@@ -697,6 +778,7 @@ class RequestHandler {
     this.browserManager = browserManager;
     this.config = config;
     this.authSource = authSource;
+    this.statsManager = statsManager;
     this.maxRetries = this.config.maxRetries;
     this.retryDelay = this.config.retryDelay;
     this.failureCount = 0;
@@ -979,6 +1061,13 @@ class RequestHandler {
       req.method === "POST" &&
       (req.path.includes("generateContent") ||
         req.path.includes("streamGenerateContent"));
+    
+    // 记录统计数据 (仅针对生成请求)
+    if (isGenerativeRequest) {
+      const todayCount = this.statsManager.incrementDailyUsage();
+      // 如果需要，可以在这里打印统计日志，但为了避免刷屏，暂时省略
+    }
+
     if (this.config.switchOnUses > 0 && isGenerativeRequest) {
       this.usageCount++;
       this.logger.info(
@@ -1042,6 +1131,9 @@ class RequestHandler {
     const model = req.body.model || "gemini-1.5-pro-latest";
     const systemStreamMode = this.serverSystem.streamingMode;
     const useRealStream = isOpenAIStream && systemStreamMode === "real";
+
+    // 记录统计数据
+    const todayCount = this.statsManager.incrementDailyUsage();
 
     if (this.config.switchOnUses > 0) {
       this.usageCount++;
@@ -2000,6 +2092,7 @@ class ProxyServerSystem extends EventEmitter {
     this.forceThinking = false;
 
     this.authSource = new AuthSource(this.logger);
+    this.statsManager = new StatsManager(this.logger); // 初始化 StatsManager
     this.browserManager = new BrowserManager(
       this.logger,
       this.config,
@@ -2012,7 +2105,8 @@ class ProxyServerSystem extends EventEmitter {
       this.logger,
       this.browserManager,
       this.config,
-      this.authSource
+      this.authSource,
+      this.statsManager // 传入 StatsManager
     );
 
     this.httpServer = null;
@@ -2452,6 +2546,7 @@ class ProxyServerSystem extends EventEmitter {
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>AIS2API 控制台</title>
         <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
         <style>
         :root { --primary: #2563eb; --success: #10b981; --danger: #ef4444; --warning: #f59e0b; --bg: #f8fafc; --card-bg: #ffffff; --text: #1e293b; --text-light: #64748b; --border: #e2e8f0; }
         body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background-color: var(--bg); color: var(--text); margin: 0; padding: 0; line-height: 1.5; }
@@ -2531,6 +2626,14 @@ class ProxyServerSystem extends EventEmitter {
                 <div class="card-header"><i class="ri-user-star-line"></i> 账号监控</div>
                 <div class="card-body" id="account-stats-body">
                     Loading...
+                </div>
+            </div>
+    
+            <!-- Usage Chart -->
+            <div class="card full-width">
+                <div class="card-header"><i class="ri-bar-chart-line"></i> 调用统计 (近7天)</div>
+                <div class="card-body" style="position: relative; height: 200px;">
+                    <canvas id="usageChart"></canvas>
                 </div>
             </div>
 
@@ -2699,51 +2802,56 @@ class ProxyServerSystem extends EventEmitter {
     });
 
     app.get("/api/status", isAuthenticated, (req, res) => {
-      const { config, requestHandler, authSource, browserManager } = this;
-      const initialIndices = authSource.initialIndices || [];
-      const invalidIndices = initialIndices.filter(
-        (i) => !authSource.availableIndices.includes(i)
-      );
-      const logs = this.logger.logBuffer || [];
-      const accountNameMap = authSource.accountNameMap;
-      const accountDetails = initialIndices.map((index) => {
-        const isInvalid = invalidIndices.includes(index);
-        const name = isInvalid
-          ? "N/A (JSON格式错误)"
-          : accountNameMap.get(index) || "N/A (未命名)";
-        return { index, name };
+        const { config, requestHandler, authSource, browserManager, statsManager } = this;
+        const initialIndices = authSource.initialIndices || [];
+        const invalidIndices = initialIndices.filter(
+          (i) => !authSource.availableIndices.includes(i)
+        );
+        const logs = this.logger.logBuffer || [];
+        const accountNameMap = authSource.accountNameMap;
+        const accountDetails = initialIndices.map((index) => {
+          const isInvalid = invalidIndices.includes(index);
+          const name = isInvalid
+            ? "N/A (JSON格式错误)"
+            : accountNameMap.get(index) || "N/A (未命名)";
+          return { index, name };
+        });
+  
+        const statsData = statsManager.getStats();
+  
+        const data = {
+          status: {
+            streamingMode: `${this.streamingMode} (仅启用流式传输时生效)`,
+            forceThinking: this.forceThinking ? "✅ 已启用" : "❌ 已关闭",
+            browserConnected: !!browserManager.browser,
+            immediateSwitchStatusCodes:
+              config.immediateSwitchStatusCodes.length > 0
+                ? `[${config.immediateSwitchStatusCodes.join(", ")}]`
+                : "已禁用",
+            apiKeySource: config.apiKeySource,
+            currentAuthIndex: requestHandler.currentAuthIndex,
+            usageCount: `${requestHandler.usageCount} / ${
+              config.switchOnUses > 0 ? config.switchOnUses : "N/A"
+            }`,
+            failureCount: `${requestHandler.failureCount} / ${
+              config.failureThreshold > 0 ? config.failureThreshold : "N/A"
+            }`,
+            initialIndices: `[${initialIndices.join(", ")}] (总数: ${
+              initialIndices.length
+            })`,
+            accountDetails: accountDetails,
+            invalidIndices: `[${invalidIndices.join(", ")}] (总数: ${
+              invalidIndices.length
+            })`,
+            // Stats Data
+            todayUsage: statsData.today,
+            dailyStats: statsData.daily
+          },
+          logs: logs.join("\n"),
+          logCount: logs.length,
+        };
+        res.json(data);
       });
-
-      const data = {
-        status: {
-          streamingMode: `${this.streamingMode} (仅启用流式传输时生效)`,
-          forceThinking: this.forceThinking ? "✅ 已启用" : "❌ 已关闭",
-          browserConnected: !!browserManager.browser,
-          immediateSwitchStatusCodes:
-            config.immediateSwitchStatusCodes.length > 0
-              ? `[${config.immediateSwitchStatusCodes.join(", ")}]`
-              : "已禁用",
-          apiKeySource: config.apiKeySource,
-          currentAuthIndex: requestHandler.currentAuthIndex,
-          usageCount: `${requestHandler.usageCount} / ${
-            config.switchOnUses > 0 ? config.switchOnUses : "N/A"
-          }`,
-          failureCount: `${requestHandler.failureCount} / ${
-            config.failureThreshold > 0 ? config.failureThreshold : "N/A"
-          }`,
-          initialIndices: `[${initialIndices.join(", ")}] (总数: ${
-            initialIndices.length
-          })`,
-          accountDetails: accountDetails,
-          invalidIndices: `[${invalidIndices.join(", ")}] (总数: ${
-            invalidIndices.length
-          })`,
-        },
-        logs: logs.join("\n"),
-        logCount: logs.length,
-      };
-      res.json(data);
-    });
     app.post("/api/switch-account", isAuthenticated, async (req, res) => {
       try {
         const { targetIndex } = req.body;

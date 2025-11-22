@@ -26,6 +26,7 @@ services:
     # 注意：Compose 会在启动时自动创建 ./auth 目录（如果不存在）
     volumes:
       - ./auth:/app/auth
+      - ./daily_stats.json:/app/daily_stats.json
       
     # 环境变量，对应脚本中的代理配置
     environment:
