@@ -485,12 +485,11 @@ class LoggingService {
   _getTimestamp() {
     const now = new Date();
     const pad = (n) => n.toString().padStart(2, "0");
-    const pad3 = (n) => n.toString().padStart(3, "0");
     return (
       `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ` +
       `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(
         now.getSeconds()
-      )}.${pad3(now.getMilliseconds())}`
+      )}`
     );
   }
 
@@ -2557,7 +2556,7 @@ class ProxyServerSystem extends EventEmitter {
                         <button onclick="switchSpecificAccount()" class="primary"><i class="ri-switch-line"></i> 执行切换</button>
                         <div style="width: 1px; height: 24px; background: #cbd5e1; margin: 0 10px;"></div>
                         <button onclick="toggleStreamingMode()"><i class="ri-wireless-charging-line"></i> 切换流模式</button>
-                        <button onclick="toggleForceThinking()"><i class="ri-brain-line"></i> 切换强制推理</button>
+                        <button onclick="toggleForceThinking()"><i class="ri-brain-line"></i> 切换强制返回思维链</button>
                     </div>
                 </div>
             </div>
@@ -2596,7 +2595,7 @@ class ProxyServerSystem extends EventEmitter {
                 // Update Config
                 document.getElementById('config-body').innerHTML =
                     renderInfoRow('流式模式', data.status.streamingMode.split(' ')[0]) +
-                    renderInfoRow('强制推理', data.status.forceThinking.includes('ON') ? '✅ 开启' : '❌ 关闭') +
+                    renderInfoRow('强制返回思维链', data.status.forceThinking.includes('ON') ? '✅ 开启' : '❌ 关闭') +
                     renderInfoRow('API认证', data.status.apiKeySource);
 
                 // Update Stats
@@ -2690,7 +2689,7 @@ class ProxyServerSystem extends EventEmitter {
 
         document.addEventListener('DOMContentLoaded', () => {
             updateContent();
-            setInterval(updateContent, 3000);
+            setInterval(updateContent, 500);
         });
         </script>
     </body>
@@ -2802,8 +2801,8 @@ class ProxyServerSystem extends EventEmitter {
     app.post("/api/toggle-force-thinking", isAuthenticated, (req, res) => {
       this.forceThinking = !this.forceThinking;
       const statusText = this.forceThinking ? "已启用" : "已关闭";
-      this.logger.info(`[WebUI] 强制推理开关已切换为: ${statusText}`);
-      res.status(200).send(`强制推理模式: ${statusText}`);
+      this.logger.info(`[WebUI] 强制返回思维链开关已切换为: ${statusText}`);
+      res.status(200).send(`强制返回思维链模式: ${statusText}`);
     });
 
     app.use(this._createAuthMiddleware());
