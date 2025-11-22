@@ -171,9 +171,22 @@ class AuthSource {
 class StatsManager {
   constructor(logger) {
     this.logger = logger;
-    this.statsFilePath = path.join(__dirname, "daily_stats.json");
+    // 修改保存路径为 data/daily_stats.json
+    this.dataDir = path.join(__dirname, "data");
+    this.statsFilePath = path.join(this.dataDir, "daily_stats.json");
     this.stats = {};
+    this._ensureDataDir(); // 确保目录存在
     this._loadStats();
+  }
+
+  _ensureDataDir() {
+    if (!fs.existsSync(this.dataDir)) {
+      try {
+        fs.mkdirSync(this.dataDir, { recursive: true });
+      } catch (error) {
+        this.logger.error(`[Stats] 创建 data 目录失败: ${error.message}`);
+      }
+    }
   }
 
   _loadStats() {
