@@ -2692,6 +2692,53 @@ class ProxyServerSystem extends EventEmitter {
         </div>
 
         <script>
+        let chartInstance = null;
+
+        function renderChart(stats) {
+            const ctx = document.getElementById('usageChart');
+            if (!ctx) return;
+
+            const safeStats = Array.isArray(stats) ? stats : [];
+            const labels = safeStats.map(item => item.date);
+            const data = safeStats.map(item => item.count);
+
+            if (chartInstance) {
+                chartInstance.data.labels = labels;
+                chartInstance.data.datasets[0].data = data;
+                chartInstance.update();
+            } else {
+                chartInstance = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: '日调用次数',
+                            data: data,
+                            backgroundColor: 'rgba(37, 99, 235, 0.5)',
+                            borderColor: 'rgba(37, 99, 235, 1)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                ticks: {
+                                    precision: 0,
+                                    suggestedMax: 5
+                                }
+                            }
+                        },
+                        plugins: {
+                          legend: { display: false }
+                        }
+                    }
+                });
+            }
+        }
+
         function renderInfoRow(label, value, isCode = false) {
             return \`<div class="info-row"><span class="info-label">\${label}</span><span class="info-value" \${isCode ? 'style="font-family:monospace"' : ''}>\${value}</span></div>\`;
         }
@@ -2716,9 +2763,15 @@ class ProxyServerSystem extends EventEmitter {
 
                 // Update Stats
                 document.getElementById('account-stats-body').innerHTML =
+                    renderInfoRow('今日调用', \`<span style="color:var(--primary);font-weight:bold">\${data.status.todayUsage || 0}</span> 次\`) +
                     renderInfoRow('使用计数', data.status.usageCount) +
                     renderInfoRow('连续失败', data.status.failureCount) +
                     renderInfoRow('扫描总数', data.status.initialIndices.match(/总数: (\\d+)/)[1] + ' 个');
+                
+                // Update Chart
+                if (data.status.dailyStats) {
+                    renderChart(data.status.dailyStats);
+                }
                     
                 // Update Account List
                 const accounts = data.status.accountDetails.map(acc =>
