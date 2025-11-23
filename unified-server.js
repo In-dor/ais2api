@@ -2623,6 +2623,52 @@ class ProxyServerSystem extends EventEmitter {
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        /* Custom Tooltip */
+        [data-tooltip] { position: relative; }
+        [data-tooltip]::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: 125%;
+            left: 50%;
+            transform: translateX(-50%) translateY(10px);
+            background: rgba(30, 41, 59, 0.95);
+            color: #f8fafc;
+            padding: 0.5rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: normal;
+            white-space: normal;
+            max-width: 240px;
+            width: max-content;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.2s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            z-index: 1000;
+            pointer-events: none;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            text-align: center;
+            line-height: 1.4;
+        }
+        [data-tooltip]::before {
+            content: '';
+            position: absolute;
+            bottom: 115%;
+            left: 50%;
+            transform: translateX(-50%) translateY(10px);
+            border: 6px solid transparent;
+            border-top-color: rgba(30, 41, 59, 0.95);
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.2s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            z-index: 1000;
+            pointer-events: none;
+        }
+        [data-tooltip]:hover::after, [data-tooltip]:hover::before {
+            opacity: 1;
+            visibility: visible;
+            transform: translateX(-50%) translateY(0);
+        }
         </style>
     </head>
     <body>
@@ -2690,8 +2736,8 @@ class ProxyServerSystem extends EventEmitter {
                         <button onclick="switchSpecificAccount()" class="primary"><i class="ri-switch-line"></i> 执行切换</button>
                         <div style="width: 1px; height: 24px; background: #cbd5e1; margin: 0 10px;"></div>
                         <button onclick="toggleStreamingMode()"><i class="ri-wireless-charging-line"></i> 切换流模式</button>
-                        <button onclick="toggleForceThinking()" title="强制模型始终返回思维链 (思考过程)。若客户端未请求或参数不正确，系统将自动注入或修正配置 (includeThoughts: true)。"><i class="ri-brain-line"></i> 切换强制返回思维链</button>
-                        <button onclick="toggleFixThinking()" title="Gemini 3.0 Pro (Build版) 不支持 thinkingLevel 参数，会导致 400 错误。开启此开关将自动移除该参数并使用默认值 (High)。"><i class="ri-magic-line"></i> 切换思考配置修正</button>
+                        <button onclick="toggleForceThinking()" data-tooltip="强制模型始终返回思维链 (思考过程)。若客户端未请求或参数不正确，系统将自动注入或修正配置 (includeThoughts: true)。"><i class="ri-brain-line"></i> 切换强制返回思维链</button>
+                        <button onclick="toggleFixThinking()" data-tooltip="Gemini 3.0 Pro (Build版) 不支持 thinkingLevel 参数，会导致 400 错误。开启此开关将自动移除该参数并使用默认值 (High)。"><i class="ri-magic-line"></i> 切换思考配置修正</button>
                     </div>
                 </div>
             </div>
