@@ -5,6 +5,17 @@ name: Build and Push Docker Image
 on:
   push:
     branches: ["main"] # 当 main 分支有更新时触发
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Docker tag version (optional)'
+        required: false
+        type: string
+      update_latest:
+        description: 'Update latest tag'
+        required: true
+        type: boolean
+        default: true
 
 jobs:
   build_and_push:
@@ -40,8 +51,10 @@ jobs:
         with:
           images: ghcr.io/${{ steps.repo_name.outputs.name }}
           tags: |
-            type=raw,value=${{ github.event.inputs.version }}
-            type=raw,value=latest,enable=${{ github.event.inputs.update_latest }}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' && github.event.inputs.update_latest == 'true' }}
+            type=raw,value=${{ github.event.inputs.version }},enable=${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version != '' }}
+            type=sha
 
       - name: Build and push Docker image to GHCR
         id: build-and-push
