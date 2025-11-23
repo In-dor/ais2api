@@ -246,7 +246,8 @@ class RequestProcessor {
             }
             
             // [1.2] 精准修复 thinkingConfig (只删报错的，保留 includeThoughts)
-            if (bodyObj.generationConfig.thinkingConfig) {
+            // 只在服务端开启了 fix_thinking_config 时执行（默认为 true）
+            if (requestSpec.fix_thinking_config !== false && bodyObj.generationConfig.thinkingConfig) {
                 // ❌ 删除会导致 400 报错的参数
                 delete bodyObj.generationConfig.thinkingConfig.thinkingLevel;   // 罪魁祸首：驼峰命名 Google 不认
                 delete bodyObj.generationConfig.thinkingConfig.thinking_level;  // 既然默认是 High，删了也没事，用默认值更稳

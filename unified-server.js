@@ -1182,6 +1182,7 @@ class RequestHandler {
       request_id: requestId,
       is_generative: true,
       streaming_mode: useRealStream ? "real" : "fake",
+      fix_thinking_config: this.serverSystem.fixThinkingConfig,
     };
 
     const messageQueue = this.connectionRegistry.createMessageQueue(requestId);
@@ -1419,9 +1420,17 @@ class RequestHandler {
         );
         bodyObj.generationConfig.thinkingConfig = { includeThoughts: true };
       } else {
-        this.logger.info(
-          `[Proxy] ✅ (Google原生格式) 检测到客户端自带推理配置，跳过强制注入。`
-        );
+        // [修正] 即使有配置，也要检查 includeThoughts 是否为 true
+        if (bodyObj.generationConfig.thinkingConfig.includeThoughts !== true) {
+          this.logger.info(
+            `[Proxy] ⚠️ (Google原生格式) 强制推理已启用，但客户端配置未开启 includeThoughts，正在修正...`
+          );
+          bodyObj.generationConfig.thinkingConfig.includeThoughts = true;
+        } else {
+          this.logger.info(
+            `[Proxy] ✅ (Google原生格式) 检测到客户端自带推理配置且已开启 includeThoughts，无需干预。`
+          );
+        }
       }
     }
 
@@ -1438,6 +1447,7 @@ class RequestHandler {
       body: requestBody,
       request_id: requestId,
       streaming_mode: this.serverSystem.streamingMode,
+      fix_thinking_config: this.serverSystem.fixThinkingConfig,
     };
   }
   _forwardRequest(proxyRequest) {
@@ -1971,11 +1981,18 @@ class RequestHandler {
     }
 
     // 4. 强制开启逻辑 (WebUI开关)
-    if (this.serverSystem.forceThinking && !thinkingConfig) {
-      this.logger.info(
-        "[Adapter] ⚠️ 强制推理已启用，且客户端未提供配置，正在注入 thinkingConfig..."
-      );
-      thinkingConfig = { includeThoughts: true };
+    if (this.serverSystem.forceThinking) {
+      if (!thinkingConfig) {
+        this.logger.info(
+          "[Adapter] ⚠️ 强制推理已启用，且客户端未提供配置，正在注入 thinkingConfig..."
+        );
+        thinkingConfig = { includeThoughts: true };
+      } else if (thinkingConfig.includeThoughts !== true) {
+        this.logger.info(
+          "[Adapter] ⚠️ 强制推理已启用，但客户端配置未开启 includeThoughts，正在修正..."
+        );
+        thinkingConfig.includeThoughts = true;
+      }
     }
 
     // 5. 写入最终配置
@@ -2103,6 +2120,7 @@ class ProxyServerSystem extends EventEmitter {
     this.streamingMode = this.config.streamingMode;
 
     this.forceThinking = false;
+    this.fixThinkingConfig = true;
 
     this.authSource = new AuthSource(this.logger);
     this.statsManager = new StatsManager(this.logger); // 初始化 StatsManager
@@ -2672,7 +2690,8 @@ class ProxyServerSystem extends EventEmitter {
                         <button onclick="switchSpecificAccount()" class="primary"><i class="ri-switch-line"></i> 执行切换</button>
                         <div style="width: 1px; height: 24px; background: #cbd5e1; margin: 0 10px;"></div>
                         <button onclick="toggleStreamingMode()"><i class="ri-wireless-charging-line"></i> 切换流模式</button>
-                        <button onclick="toggleForceThinking()"><i class="ri-brain-line"></i> 切换强制返回思维链</button>
+                        <button onclick="toggleForceThinking()" title="强制模型始终返回思维链 (思考过程)。若客户端未请求或参数不正确，系统将自动注入或修正配置 (includeThoughts: true)。"><i class="ri-brain-line"></i> 切换强制返回思维链</button>
+                        <button onclick="toggleFixThinking()" title="Gemini 3.0 Pro (Build版) 不支持 thinkingLevel 参数，会导致 400 错误。开启此开关将自动移除该参数并使用默认值 (High)。"><i class="ri-magic-line"></i> 切换思考配置修正</button>
                     </div>
                 </div>
             </div>
@@ -2759,6 +2778,7 @@ class ProxyServerSystem extends EventEmitter {
                 document.getElementById('config-body').innerHTML =
                     renderInfoRow('流式模式', data.status.streamingMode.split(' ')[0]) +
                     renderInfoRow('强制返回思维链', data.status.forceThinking) +
+                    renderInfoRow('修正思考配置', data.status.fixThinkingConfig) +
                     renderInfoRow('API认证', data.status.apiKeySource);
 
                 // Update Stats
@@ -2833,22 +2853,25 @@ class ProxyServerSystem extends EventEmitter {
         }
             
         function toggleStreamingMode() {
-            const newMode = prompt('请输入新的流模式 (real 或 fake):', '${
-              this.config.streamingMode
-            }');
-            if (newMode === 'fake' || newMode === 'real') {
-                fetch('/api/set-mode', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ mode: newMode })
-                })
-                .then(res => res.text()).then(data => { alert(data); updateContent(); })
-                .catch(err => alert('设置失败: ' + err));
-            }
+            fetch('/api/toggle-streaming-mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(res => res.text()).then(data => { alert(data); updateContent(); })
+            .catch(err => alert('设置失败: ' + err));
         }
 
         function toggleForceThinking() {
             fetch('/api/toggle-force-thinking', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(res => res.text()).then(data => { alert(data); updateContent(); })
+            .catch(err => alert('设置失败: ' + err));
+        }
+
+        function toggleFixThinking() {
+            fetch('/api/toggle-fix-thinking', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' }
             })
@@ -2889,6 +2912,7 @@ class ProxyServerSystem extends EventEmitter {
           status: {
             streamingMode: `${this.streamingMode} (仅启用流式传输时生效)`,
             forceThinking: this.forceThinking ? "✅ 已启用" : "❌ 已关闭",
+            fixThinkingConfig: this.fixThinkingConfig ? "✅ 已启用" : "❌ 已关闭",
             browserConnected: !!browserManager.browser,
             immediateSwitchStatusCodes:
               config.immediateSwitchStatusCodes.length > 0
@@ -2972,11 +2996,26 @@ class ProxyServerSystem extends EventEmitter {
       }
     });
 
+    app.post("/api/toggle-streaming-mode", isAuthenticated, (req, res) => {
+      this.streamingMode = this.streamingMode === "real" ? "fake" : "real";
+      this.logger.info(
+        `[WebUI] 流式模式已切换为: ${this.streamingMode}`
+      );
+      res.status(200).send(`流式模式已切换为: ${this.streamingMode}`);
+    });
+
     app.post("/api/toggle-force-thinking", isAuthenticated, (req, res) => {
       this.forceThinking = !this.forceThinking;
       const statusText = this.forceThinking ? "已启用" : "已关闭";
       this.logger.info(`[WebUI] 强制返回思维链开关已切换为: ${statusText}`);
       res.status(200).send(`强制返回思维链模式: ${statusText}`);
+    });
+
+    app.post("/api/toggle-fix-thinking", isAuthenticated, (req, res) => {
+      this.fixThinkingConfig = !this.fixThinkingConfig;
+      const statusText = this.fixThinkingConfig ? "已启用" : "已关闭";
+      this.logger.info(`[WebUI] 思考配置修正开关已切换为: ${statusText}`);
+      res.status(200).send(`思考配置修正模式: ${statusText}`);
     });
 
     app.use(this._createAuthMiddleware());
