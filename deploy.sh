@@ -2,8 +2,8 @@
 
 # --- 项目配置 ---
 CONTAINER_NAME="ais2api"
-IMAGE_NAME="ellinalopez/cloud-studio:latest"
-HOST_PORT="8889"
+IMAGE_NAME="ghcr.io/in-dor/ais2api:latest"
+HOST_PORT="7862"
 ENV_FILE="app.env" # 指定您的环境文件名
 
 # --- 代理配置 ---
@@ -41,18 +41,36 @@ DOCKER_OPTS=(
     --restart unless-stopped
 )
 
-# 条件性地向数组中添加挂载参数
+# 定义权限提升前缀（如果不是root且存在sudo命令，则使用sudo）
+SUDO_CMD=""
+if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
+    SUDO_CMD="sudo"
+fi
+
+# 条件性地向数组中添加挂载参数 - Auth
 if [ -d "./auth" ]; then
     echo "--> 检测到 'auth' 目录..."
     
-    # [核心修正] 在挂载前，自动修正目录权限
+    # [核心修正] 在挂载前，自动修正目录权限以匹配容器内 Node 用户 (UID 1000)
     echo "--> 正在为 'auth' 目录设置权限..."
-    sudo chown -R 1000:1000 ./auth
+    $SUDO_CMD chown -R 1000:1000 ./auth
     
     echo "--> 正在将 'auth' 目录挂载到容器中..."
     DOCKER_OPTS+=(-v "$(pwd)/auth:/app/auth")
 else
     echo "--> 未检测到 'auth' 目录，跳过挂载。"
+fi
+
+# 条件性地向数组中添加挂载参数 - Data (用于持久化统计数据)
+if [ ! -d "./data" ]; then
+    echo "--> 'data' 目录不存在，正在创建..."
+    mkdir -p ./data
+    $SUDO_CMD chown -R 1000:1000 ./data
+fi
+
+if [ -d "./data" ]; then
+    echo "--> 正在将 'data' 目录挂载到容器中..."
+    DOCKER_OPTS+=(-v "$(pwd)/data:/app/data")
 fi
 
 # 条件性地向数组中添加代理参数
