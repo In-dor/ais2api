@@ -174,9 +174,12 @@ class StatsManager {
     // 修改保存路径为 data/daily_stats.json
     this.dataDir = path.join(__dirname, "data");
     this.statsFilePath = path.join(this.dataDir, "daily_stats.json");
+    this.accountStatsFilePath = path.join(this.dataDir, "account_stats.json");
     this.stats = {};
+    this.accountStats = {};
     this._ensureDataDir(); // 确保目录存在
     this._loadStats();
+    this._loadAccountStats();
   }
 
   _ensureDataDir() {
@@ -201,11 +204,34 @@ class StatsManager {
     }
   }
 
+  _loadAccountStats() {
+    try {
+      if (fs.existsSync(this.accountStatsFilePath)) {
+        const data = fs.readFileSync(this.accountStatsFilePath, "utf-8");
+        this.accountStats = JSON.parse(data);
+      }
+    } catch (error) {
+      this.logger.error(`[Stats] 加载账号统计文件失败: ${error.message}`);
+      this.accountStats = {};
+    }
+  }
+
   _saveStats() {
     try {
       fs.writeFileSync(this.statsFilePath, JSON.stringify(this.stats, null, 2));
     } catch (error) {
       this.logger.error(`[Stats] 保存统计文件失败: ${error.message}`);
+    }
+  }
+
+  _saveAccountStats() {
+    try {
+      fs.writeFileSync(
+        this.accountStatsFilePath,
+        JSON.stringify(this.accountStats, null, 2)
+      );
+    } catch (error) {
+      this.logger.error(`[Stats] 保存账号统计文件失败: ${error.message}`);
     }
   }
 
@@ -225,6 +251,24 @@ class StatsManager {
     this.stats[today]++;
     this._saveStats();
     return this.stats[today];
+  }
+
+  incrementAccountUsage(authIndex) {
+    const today = this._getTodayDateString();
+    if (!this.accountStats[today]) {
+      this.accountStats[today] = {};
+    }
+    if (!this.accountStats[today][authIndex]) {
+      this.accountStats[today][authIndex] = 0;
+    }
+    this.accountStats[today][authIndex]++;
+    this._saveAccountStats();
+    return this.accountStats[today][authIndex];
+  }
+
+  getTodayAccountStats() {
+    const today = this._getTodayDateString();
+    return this.accountStats[today] || {};
   }
 
   getStats(days = 7) {
@@ -1078,6 +1122,7 @@ class RequestHandler {
     // 记录统计数据 (仅针对生成请求)
     if (isGenerativeRequest) {
       const todayCount = this.statsManager.incrementDailyUsage();
+      this.statsManager.incrementAccountUsage(this.currentAuthIndex);
       // 如果需要，可以在这里打印统计日志，但为了避免刷屏，暂时省略
     }
 
@@ -1147,6 +1192,7 @@ class RequestHandler {
 
     // 记录统计数据
     const todayCount = this.statsManager.incrementDailyUsage();
+    this.statsManager.incrementAccountUsage(this.currentAuthIndex);
 
     if (this.config.switchOnUses > 0) {
       this.usageCount++;
@@ -2613,9 +2659,9 @@ class ProxyServerSystem extends EventEmitter {
         button.primary { background: var(--primary); color: white; border: none; }
         button.primary:hover { background: #1d4ed8; }
         
-        .account-list { max-height: 300px; overflow-y: auto; }
-        .account-item { display: flex; align-items: center; padding: 0.5rem; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
-        .account-item:last-child { border-bottom: none; }
+        .account-list { max-height: 300px; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0.75rem; padding-right: 0.5rem; }
+        .account-item { display: flex; align-items: center; padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; font-size: 0.9rem; background-color: #f8fafc; transition: all 0.2s; }
+        .account-item:hover { border-color: var(--primary); background: #f0f9ff; }
         .account-idx { background: #e2e8f0; padding: 2px 8px; border-radius: 4px; margin-right: 10px; font-size: 0.8rem; font-family: monospace; }
         
         /* Scrollbar styling */
@@ -2715,7 +2761,7 @@ class ProxyServerSystem extends EventEmitter {
             </div>
 
             <!-- Accounts List -->
-            <div class="card">
+            <div class="card full-width">
                  <div class="card-header"><i class="ri-group-line"></i> 账号列表</div>
                  <div class="card-body">
                      <div class="account-list" id="account-list-body">
@@ -2840,10 +2886,11 @@ class ProxyServerSystem extends EventEmitter {
                 }
                     
                 // Update Account List
-                const accounts = data.status.accountDetails.map(acc =>
-                    \`<div class="account-item"><span class="account-idx">#\${acc.index}</span> \${acc.name}</div>\`
-                ).join('');
-                const invalid = data.status.invalidIndices !== '[]' ? \`<div style="padding:0.5rem; color:var(--danger); font-size:0.9rem; border-top:1px solid #eee;">⚠️ 无效索引: \${data.status.invalidIndices}</div>\` : '';
+                const accounts = data.status.accountDetails.map(acc => {
+                    const count = (data.status.accountStats && data.status.accountStats[acc.index]) || 0;
+                    return \`<div class="account-item" style="justify-content:space-between"><div style="display:flex;align-items:center"><span class="account-idx">#\${acc.index}</span> \${acc.name}</div><span style="font-size:0.8rem;color:var(--text-light);background:#e2e8f0;padding:2px 6px;border-radius:4px;">\${count}次</span></div>\`;
+                }).join('');
+                const invalid = data.status.invalidIndices !== '[]' ? \`<div style="grid-column: 1 / -1; padding:0.75rem; color:#991b1b; background:#fee2e2; border-radius:8px; font-size:0.9rem; display:flex; align-items:center; gap:0.5rem;"><i class="ri-error-warning-line"></i> 无效索引: \${data.status.invalidIndices}</div>\` : '';
                 
                 document.getElementById('account-list-body').innerHTML = accounts + invalid;
 
@@ -2953,6 +3000,7 @@ class ProxyServerSystem extends EventEmitter {
         });
   
         const statsData = statsManager.getStats();
+        const accountStats = statsManager.getTodayAccountStats();
   
         const data = {
           status: {
@@ -2981,7 +3029,8 @@ class ProxyServerSystem extends EventEmitter {
             })`,
             // Stats Data
             todayUsage: statsData.today,
-            dailyStats: statsData.daily
+            dailyStats: statsData.daily,
+            accountStats: accountStats
           },
           logs: logs.join("\n"),
           logCount: logs.length,
