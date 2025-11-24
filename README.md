@@ -74,24 +74,52 @@ IMMEDIATE_SWITCH_STATUS_CODES=429,503
 
 ### 4. 启动服务
 
-#### 方式 A: 使用 Docker Compose (推荐)
+根据你的环境选择一种部署方式。
+
+#### 方式 A: 使用 Docker Compose (VPS/本地服务器推荐)
+
+这是最简单的管理方式，支持自动重启和日志管理。
 
 ```bash
 docker-compose up -d
 ```
 
-服务启动后，默认监听 **7862** 端口 (根据 `docker-compose.yml` 配置)。
+服务启动后，默认监听 **7862** 端口 (可在 `docker-compose.yml` 中修改)。
 
-#### 方式 B: 使用部署脚本
+#### 方式 B: 全云端/PaaS 平台部署 (Zeabur / Claw / Render 等)
+
+如果你使用 Zeabur、Claw Cloud 或其他容器托管平台，请参考以下配置：
+
+1.  **创建服务**: 选择“部署 Docker 镜像”。
+2.  **镜像名称 (Image)**: `ghcr.io/in-dor/ais2api:latest`
+    - _(注: 原教程中的 `ellinalopez/cloud-studio:latest` 为旧版，请务必使用上述新版镜像)_
+3.  **端口设置 (Port)**:
+    - 容器端口: `7860` (必须是这个)
+    - 公网端口: 开启 Public Access
+4.  **资源建议 (Resources)**:
+    - CPU: 0.5 Core 以上
+    - Memory: 1 GB 以上
+5.  **环境变量 (Environment Variables)**:
+    - 在平台的“设置”或“环境变量”页面添加以下内容：
+    - `API_KEYS`: (必填) 设置你的访问密码，如 `sk-123456`。
+    - `AUTH_JSON_1`: (必填) 打开你生成的 `auth/auth-1.json` 文件，复制**全部内容**填入。
+    - `AUTH_JSON_2`: (可选) 如果有多账号，依此类推填入第二个文件的内容。
+    - `SWITCH_ON_USES`: (可选) 建议设为 `50`。
+    - `STREAMING_MODE`: (可选) 建议设为 `real`。
+
+> 📚 详细的 **全云端部署图文教程** (涵盖 Claw/Zeabur/VPS) 请参考：
+> [**全云端 Build 轮询反代部署指南**](https://gcn02iwpisfi.feishu.cn/wiki/UMDzwFu0ki3AEfkQ3A7c7bHvnIL) > _(注：教程中的镜像名请替换为本项目最新的 `ghcr.io/in-dor/ais2api:latest`)_
+
+#### 方式 C: 使用 Shell 部署脚本 (Linux)
 
 ```bash
 chmod +x deploy.sh
 ./deploy.sh
 ```
 
-#### 方式 C: 直接运行 (Node.js)
+#### 方式 D: 直接运行 (Node.js 源码部署)
 
-如果不使用 Docker，确保已安装 Firefox 浏览器依赖。
+如果不使用 Docker，请确保本地已安装 Firefox 浏览器依赖。
 
 ```bash
 npm start
@@ -157,14 +185,6 @@ curl "http://localhost:7862/v1beta/models/gemini-2.0-flash-exp:generateContent?k
   - **统计**: 查看每日调用次数图表。
 
 ## 🧩 高级配置
-
-### 环境变量 (环境变量方式认证)
-
-如果你无法挂载文件 (例如在某些 PaaS 平台)，可以将 `auth-n.json` 的内容直接放入环境变量：
-
-- `AUTH_JSON_1`: 填入 `auth-1.json` 的完整内容。
-- `AUTH_JSON_2`: 填入 `auth-2.json` 的完整内容。
-- ...以此类推。
 
 ### 配置文件 (config.json)
 
