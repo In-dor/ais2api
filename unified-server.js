@@ -1166,13 +1166,6 @@ class RequestHandler {
       (req.path.includes("generateContent") ||
         req.path.includes("streamGenerateContent"));
     
-    // 记录统计数据 (仅针对生成请求)
-    if (isGenerativeRequest) {
-      const todayCount = this.statsManager.incrementDailyUsage();
-      this.statsManager.incrementAccountUsage(this.currentAuthIndex);
-      // 如果需要，可以在这里打印统计日志，但为了避免刷屏，暂时省略
-    }
-
     if (this.config.switchOnUses > 0 && isGenerativeRequest) {
       this.usageCount++;
       this.logger.info(
@@ -1237,10 +1230,6 @@ class RequestHandler {
     const systemStreamMode = this.serverSystem.streamingMode;
     const useRealStream = isOpenAIStream && systemStreamMode === "real";
 
-    // 记录统计数据
-    const todayCount = this.statsManager.incrementDailyUsage();
-    this.statsManager.incrementAccountUsage(this.currentAuthIndex);
-
     if (this.config.switchOnUses > 0) {
       this.usageCount++;
       this.logger.info(
@@ -1303,6 +1292,10 @@ class RequestHandler {
         }
         return;
       }
+
+      // [统计] 请求成功，记录统计数据
+      this.statsManager.incrementDailyUsage();
+      this.statsManager.incrementAccountUsage(this.currentAuthIndex);
 
       if (this.failureCount > 0) {
         this.logger.info(
@@ -1664,11 +1657,17 @@ class RequestHandler {
       }
 
       // 成功的逻辑
-      if (proxyRequest.is_generative && this.failureCount > 0) {
-        this.logger.info(
-          `✅ [Auth] 生成请求成功 - 失败计数已从 ${this.failureCount} 重置为 0`
-        );
-        this.failureCount = 0;
+      if (proxyRequest.is_generative) {
+        // [统计] 请求成功，记录统计数据
+        this.statsManager.incrementDailyUsage();
+        this.statsManager.incrementAccountUsage(this.currentAuthIndex);
+
+        if (this.failureCount > 0) {
+          this.logger.info(
+            `✅ [Auth] 生成请求成功 - 失败计数已从 ${this.failureCount} 重置为 0`
+          );
+          this.failureCount = 0;
+        }
       }
       const dataMessage = await messageQueue.dequeue();
       const endMessage = await messageQueue.dequeue();
@@ -1727,11 +1726,17 @@ class RequestHandler {
     }
 
     // --- 核心修改：只有在生成请求成功时，才重置失败计数 ---
-    if (proxyRequest.is_generative && this.failureCount > 0) {
-      this.logger.info(
-        `✅ [Auth] 生成请求成功 - 失败计数已从 ${this.failureCount} 重置为 0`
-      );
-      this.failureCount = 0;
+    if (proxyRequest.is_generative) {
+      // [统计] 请求成功，记录统计数据
+      this.statsManager.incrementDailyUsage();
+      this.statsManager.incrementAccountUsage(this.currentAuthIndex);
+
+      if (this.failureCount > 0) {
+        this.logger.info(
+          `✅ [Auth] 生成请求成功 - 失败计数已从 ${this.failureCount} 重置为 0`
+        );
+        this.failureCount = 0;
+      }
     }
     // --- 修改结束 ---
 
@@ -1815,12 +1820,18 @@ class RequestHandler {
         }
       }
 
-      // 3. 重置失败计数器（如果需要）
-      if (proxyRequest.is_generative && this.failureCount > 0) {
-        this.logger.info(
-          `✅ [Auth] 非流式生成请求成功 - 失败计数已从 ${this.failureCount} 重置为 0`
-        );
-        this.failureCount = 0;
+      // 3. 重置失败计数器（如果需要）和记录统计
+      if (proxyRequest.is_generative) {
+        // [统计] 请求成功，记录统计数据
+        this.statsManager.incrementDailyUsage();
+        this.statsManager.incrementAccountUsage(this.currentAuthIndex);
+
+        if (this.failureCount > 0) {
+          this.logger.info(
+            `✅ [Auth] 非流式生成请求成功 - 失败计数已从 ${this.failureCount} 重置为 0`
+          );
+          this.failureCount = 0;
+        }
       }
 
       // [核心修正] 对Google原生格式的响应进行智能图片处理
