@@ -398,7 +398,7 @@ class ProxySystem extends EventTarget {
   async _processProxyRequest(requestSpec) {
     const operationId = requestSpec.request_id;
     const mode = requestSpec.streaming_mode || "fake";
-    Logger.output(`浏览器收到请求`);
+    // Logger.output(`浏览器收到请求`);
 
     try {
       if (this.requestProcessor.cancelledOperations.has(operationId)) {
@@ -435,7 +435,7 @@ class ProxySystem extends EventTarget {
         }
       }
 
-      Logger.output("数据流已读取完成。");
+      // Logger.output("数据流已读取完成。");
 
       if (mode === "fake") {
         // 非流式模式下，在循环结束后，转发拼接好的完整响应体

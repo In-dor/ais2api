@@ -473,60 +473,46 @@ class BrowserManager {
         );
       }
 
-      this.logger.info(`[Browser] 正在检查 Cookie 同意横幅...`);
+      // 简化 UI 检查日志，只在采取行动时记录
       try {
         const agreeButton = this.page.locator('button:text("Agree")');
-        await agreeButton.waitFor({ state: "visible", timeout: 10000 });
-        this.logger.info(
-          `[Browser] ✅ 发现 Cookie 同意横幅，正在点击 "Agree"...`
-        );
-        await agreeButton.click({ force: true });
-        await this.page.waitForTimeout(1000);
-      } catch (error) {
-        this.logger.info(`[Browser] 未发现 Cookie 同意横幅，跳过。`);
-      }
+        if (await agreeButton.isVisible({ timeout: 5000 })) {
+          this.logger.info(`[Browser] ✅ 点击 Cookie 同意横幅`);
+          await agreeButton.click({ force: true });
+          await this.page.waitForTimeout(1000);
+        }
+      } catch (error) {}
 
-      this.logger.info(`[Browser] 正在检查 "Got it" 弹窗...`);
       try {
-        const gotItButton = this.page.locator(
-          'div.dialog button:text("Got it")'
-        );
-        await gotItButton.waitFor({ state: "visible", timeout: 15000 });
-        this.logger.info(`[Browser] ✅ 发现 "Got it" 弹窗，正在点击...`);
-        await gotItButton.click({ force: true });
-        await this.page.waitForTimeout(1000);
-      } catch (error) {
-        this.logger.info(`[Browser] 未发现 "Got it" 弹窗，跳过。`);
-      }
+        const gotItButton = this.page.locator('div.dialog button:text("Got it")');
+        if (await gotItButton.isVisible({ timeout: 5000 })) {
+          this.logger.info(`[Browser] ✅ 点击 "Got it" 弹窗`);
+          await gotItButton.click({ force: true });
+          await this.page.waitForTimeout(1000);
+        }
+      } catch (error) {}
 
-      this.logger.info(`[Browser] 正在检查新手引导...`);
       try {
         const closeButton = this.page.locator('button[aria-label="Close"]');
-        await closeButton.waitFor({ state: "visible", timeout: 15000 });
-        this.logger.info(`[Browser] ✅ 发现新手引导弹窗，正在点击关闭按钮...`);
-        await closeButton.click({ force: true });
-        await this.page.waitForTimeout(1000);
-      } catch (error) {
-        this.logger.info(
-          `[Browser] 未发现 "It's time to build" 新手引导，跳过。`
-        );
-      }
+        if (await closeButton.isVisible({ timeout: 5000 })) {
+          this.logger.info(`[Browser] ✅ 关闭新手引导弹窗`);
+          await closeButton.click({ force: true });
+          await this.page.waitForTimeout(1000);
+        }
+      } catch (error) {}
 
-      this.logger.info("[Browser] 准备UI交互，强行移除所有可能的遮罩层...");
+      // 移除遮罩层 (静默处理，除非数量很多)
       await this.page.evaluate(() => {
         const overlays = document.querySelectorAll("div.cdk-overlay-backdrop");
         if (overlays.length > 0) {
-          console.log(
-            `[ProxyClient] (内部JS) 发现并移除了 ${overlays.length} 个遮罩层。`
-          );
           overlays.forEach((el) => el.remove());
         }
       });
 
-      this.logger.info('[Browser] (步骤1/5) 准备点击 "Code" 按钮...');
+      this.logger.info('[Browser] 正在初始化编辑器...');
       for (let i = 1; i <= 5; i++) {
         try {
-          this.logger.info(`  [尝试 ${i}/5] 清理遮罩层并点击...`);
+          // this.logger.debug(`  [Attempt ${i}/5] Clear overlays & Click Code btn...`);
           await this.page.evaluate(() => {
             document
               .querySelectorAll("div.cdk-overlay-backdrop")
@@ -537,12 +523,9 @@ class BrowserManager {
           await this.page
             .locator('button:text("Code")')
             .click({ timeout: 10000 });
-          this.logger.info("  ✅ 点击成功！");
+          // Click success
           break;
         } catch (error) {
-          this.logger.warn(
-            `  [尝试 ${i}/5] 点击失败: ${error.message.split("\n")[0]}`
-          );
           if (i === 5) {
             // [新增截图] 在最终失败时保存截图
             try {
@@ -567,47 +550,23 @@ class BrowserManager {
         }
       }
 
-      this.logger.info(
-        '[Browser] (步骤2/5) "Code" 按钮点击成功，等待编辑器变为可见...'
-      );
-      const editorContainerLocator = this.page
-        .locator("div.monaco-editor")
-        .first();
-      await editorContainerLocator.waitFor({
-        state: "visible",
-        timeout: 60000,
-      });
+      const editorContainerLocator = this.page.locator("div.monaco-editor").first();
+      await editorContainerLocator.waitFor({ state: "visible", timeout: 60000 });
 
-      this.logger.info(
-        "[Browser] (清场 #2) 准备点击编辑器，再次强行移除所有可能的遮罩层..."
-      );
+      // 二次清理遮罩层
       await this.page.evaluate(() => {
-        const overlays = document.querySelectorAll("div.cdk-overlay-backdrop");
-        if (overlays.length > 0) {
-          console.log(
-            `[ProxyClient] (内部JS) 发现并移除了 ${overlays.length} 个新出现的遮罩层。`
-          );
-          overlays.forEach((el) => el.remove());
-        }
+        document.querySelectorAll("div.cdk-overlay-backdrop").forEach((el) => el.remove());
       });
       await this.page.waitForTimeout(250);
 
-      this.logger.info("[Browser] (步骤3/5) 编辑器已显示，聚焦并粘贴脚本...");
       await editorContainerLocator.click({ timeout: 30000 });
-
-      await this.page.evaluate(
-        (text) => navigator.clipboard.writeText(text),
-        buildScriptContent
-      );
+      await this.page.evaluate((text) => navigator.clipboard.writeText(text), buildScriptContent);
+      
       const isMac = os.platform() === "darwin";
-      const pasteKey = isMac ? "Meta+V" : "Control+V";
-      await this.page.keyboard.press(pasteKey);
-      this.logger.info("[Browser] (步骤4/5) 脚本已粘贴。");
-      this.logger.info(
-        '[Browser] (步骤5/5) 正在点击 "Preview" 按钮以使脚本生效...'
-      );
+      await this.page.keyboard.press(isMac ? "Meta+V" : "Control+V");
+      
       await this.page.locator('button:text("Preview")').click();
-      this.logger.info("[Browser] ✅ UI交互完成，脚本已开始运行。");
+      this.logger.info("[Browser] ✅ 脚本注入完成，等待运行...");
       this.currentAuthIndex = authIndex;
       this.logger.info("==================================================");
       this.logger.info(`✅ [Browser] 账号 ${authIndex} 的上下文初始化成功！`);
@@ -1168,9 +1127,15 @@ class RequestHandler {
     
     if (this.config.switchOnUses > 0 && isGenerativeRequest) {
       this.usageCount++;
-      this.logger.info(
-        `[Request] 生成请求 - 账号轮换计数: ${this.usageCount}/${this.config.switchOnUses} (当前账号: ${this.currentAuthIndex})`
-      );
+      // 仅在每10次或接近阈值时打印日志，减少刷屏
+      if (
+        this.usageCount % 10 === 0 ||
+        this.usageCount >= this.config.switchOnUses - 3
+      ) {
+        this.logger.info(
+          `[Request] 账号轮换计数: ${this.usageCount}/${this.config.switchOnUses} (当前账号: ${this.currentAuthIndex})`
+        );
+      }
       if (this.usageCount >= this.config.switchOnUses) {
         this.needsSwitchingAfterRequest = true;
       }
@@ -1232,9 +1197,15 @@ class RequestHandler {
 
     if (this.config.switchOnUses > 0) {
       this.usageCount++;
-      this.logger.info(
-        `[Request] OpenAI生成请求 - 账号轮换计数: ${this.usageCount}/${this.config.switchOnUses} (当前账号: ${this.currentAuthIndex})`
-      );
+      // 仅在每10次或接近阈值时打印日志
+      if (
+        this.usageCount % 10 === 0 ||
+        this.usageCount >= this.config.switchOnUses - 3
+      ) {
+        this.logger.info(
+          `[Request] 账号轮换计数: ${this.usageCount}/${this.config.switchOnUses} (当前账号: ${this.currentAuthIndex})`
+        );
+      }
       if (this.usageCount >= this.config.switchOnUses) {
         this.needsSwitchingAfterRequest = true;
       }
@@ -1963,7 +1934,7 @@ class RequestHandler {
   }
 
   _translateOpenAIToGoogle(openaiBody, modelName = "") {
-    this.logger.info("[Adapter] 开始将OpenAI请求格式翻译为Google格式...");
+    // this.logger.debug("[Adapter] 开始将OpenAI请求格式翻译为Google格式...");
 
     let systemInstruction = null;
     const googleContents = [];
@@ -2114,7 +2085,6 @@ class RequestHandler {
       { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
     ];
 
-    this.logger.info("[Adapter] 翻译完成。");
     return googleRequest;
   }
 
@@ -2606,7 +2576,7 @@ class ProxyServerSystem extends EventEmitter {
           body { margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: var(--bg-gradient); color: #333; }
           .card { background: white; padding: 2.5rem; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); width: 100%; max-width: 400px; text-align: center; transition: transform 0.3s ease; }
           .card:hover { transform: translateY(-5px); }
-          h2 { margin-bottom: 1.5rem; color: #1a202c; font-weight: 600; }
+          h2 { margin-bottom: 1.5rem; color: #1a202c; font-weight: 600; font-size: 1.5rem; }
           .input-group { margin-bottom: 1.5rem; text-align: left; }
           label { display: block; margin-bottom: 0.5rem; font-size: 0.875rem; font-weight: 500; color: #4a5568; }
           input { width: 100%; padding: 0.75rem 1rem; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 1rem; transition: border-color 0.2s; box-sizing: border-box; outline: none; }
