@@ -234,12 +234,23 @@ class StatsManager {
     }
   }
 
-  _getTodayDateString() {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, "0");
-    const day = String(now.getDate()).padStart(2, "0");
+  // [New] 计算逻辑上的有效统计日期 (北京时间 16:00 重置，即 UTC 08:00)
+  // 将 UTC 时间偏移 -8 小时，使得 UTC 08:00 变为当天的 00:00
+  _getEffectiveDate(baseDate = new Date()) {
+    return new Date(baseDate.getTime() - 8 * 60 * 60 * 1000);
+  }
+
+  // [New] 格式化为 UTC 日期字符串，确保不受服务器时区影响
+  _formatDate(date) {
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(date.getUTCDate()).padStart(2, "0");
     return `${year}-${month}-${day}`;
+  }
+
+  _getTodayDateString() {
+    const effectiveDate = this._getEffectiveDate();
+    return this._formatDate(effectiveDate);
   }
 
   incrementDailyUsage() {
@@ -272,16 +283,15 @@ class StatsManager {
 
   getStats(days = 7) {
     const result = [];
-    const today = new Date();
+    // 基准时间使用逻辑上的有效日期
+    const effectiveNow = this._getEffectiveDate();
 
     for (let i = days - 1; i >= 0; i--) {
-      const date = new Date(today);
-      date.setDate(today.getDate() - i);
+      const d = new Date(effectiveNow);
+      // 使用 UTC 日期操作，避免时区干扰
+      d.setUTCDate(effectiveNow.getUTCDate() - i);
       
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, "0");
-      const day = String(date.getDate()).padStart(2, "0");
-      const dateString = `${year}-${month}-${day}`;
+      const dateString = this._formatDate(d);
 
       result.push({
         date: dateString,
@@ -289,8 +299,7 @@ class StatsManager {
       });
     }
     
-    // Add today's count if not already covered (though logic above covers it)
-    // Also return total count for today separately for quick access
+    // 获取今日的字符串 (基于同样的逻辑)
     const todayStr = this._getTodayDateString();
     
     return {
