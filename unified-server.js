@@ -1470,8 +1470,12 @@ class RequestHandler {
   }
   _buildProxyRequest(req, requestId) {
     let bodyObj = req.body;
+    // [修改] 排除 gemini-2.5-flash-image 不受强制思维链影响
+    const isExcludedModel = req.path && req.path.includes("gemini-2.5-flash-image");
+
     if (
       this.serverSystem.forceThinking &&
+      !isExcludedModel &&
       req.method === "POST" &&
       bodyObj &&
       bodyObj.contents
@@ -2065,7 +2069,8 @@ class RequestHandler {
     }
 
     // 4. 强制开启逻辑 (WebUI开关)
-    if (this.serverSystem.forceThinking) {
+    const isExcludedModel = modelName && modelName.includes("gemini-2.5-flash-image");
+    if (this.serverSystem.forceThinking && !isExcludedModel) {
       if (!thinkingConfig) {
         this.logger.info(
           "[Adapter] ⚠️ 强制推理已启用，且客户端未提供配置，正在注入 thinkingConfig..."
