@@ -1725,6 +1725,33 @@ class RequestHandler {
     // --- 修改结束 ---
 
     this._setResponseHeaders(res, headerMessage);
+
+    let contentType = res.get("Content-Type") || "";
+
+    // [Fix] 如果 Content-Type 缺失，且状态码正常，默认为 text/event-stream
+    if (!contentType && (headerMessage.status === 200 || !headerMessage.status)) {
+      res.set("Content-Type", "text/event-stream");
+      contentType = "text/event-stream";
+    }
+
+    // [Fix] RikkaHub 兼容性修复：
+    // 1. 修正 text/plain 或 application/octet-stream
+    // 2. 修正流式请求中出现的 application/json (导致 RikkaHub 报错 Invalid content-type: application/json)
+    const isErrorStatus = headerMessage.status && headerMessage.status >= 400;
+    
+    if (
+      !isErrorStatus &&
+      (contentType.includes("text/plain") ||
+        contentType.includes("application/octet-stream") ||
+        contentType.includes("application/json"))
+    ) {
+      // 既然进入了 _handleRealStreamResponse，说明客户端期望流式响应
+      res.set("Content-Type", "text/event-stream");
+      this.logger.info(
+        `[Request] 已将 Content-Type 从 "${contentType}" 强制修正为 "text/event-stream" 以兼容 RikkaHub (流式模式)。`
+      );
+    }
+
     this.logger.info("[Request] 开始流式传输...");
     try {
       let lastChunk = "";
@@ -1867,10 +1894,14 @@ class RequestHandler {
       } catch (e) {}
 
       // 4. 设置正确的JSON响应头，并一次性发送处理过的全部数据
-      res
-        .status(headerMessage.status || 200)
-        .type("application/json")
-        .send(fullBody || "{}");
+      // 如果上游没有返回 Content-Type，或者我们之前没有设置，这里显式设置为 json
+      if (!res.get("Content-Type")) {
+        res.type("application/json");
+      } else {
+        res.status(headerMessage.status || 200);
+      }
+      
+      res.send(fullBody || "{}");
 
       this.logger.info(`[Request] 已向客户端发送完整的非流式响应。`);
     } catch (error) {
@@ -1911,8 +1942,19 @@ class RequestHandler {
   _setResponseHeaders(res, headerMessage) {
     res.status(headerMessage.status || 200);
     const headers = headerMessage.headers || {};
+    const ignoredHeaders = [
+      "content-length",
+      "content-encoding",
+      "transfer-encoding",
+      "connection",
+      "keep-alive",
+    ];
+
     Object.entries(headers).forEach(([name, value]) => {
-      if (name.toLowerCase() !== "content-length") res.set(name, value);
+      const lowerName = name.toLowerCase();
+      if (!ignoredHeaders.includes(lowerName)) {
+        res.set(name, value);
+      }
     });
   }
   _handleRequestError(error, res) {
