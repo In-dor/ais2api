@@ -464,7 +464,7 @@ class BrowserManager {
         pageTitle.includes("not available")
       ) {
         throw new Error(
-          "🚨 当前 IP 不支持访问 Google AI Studio (地区受限/送中)。Claw 节点可能被识别为受限地区，请尝试重启容器获取新IP。"
+          "🚨 当前 IP 不支持访问 Google AI Studio。请更换节点后重启！"
         );
       }
 
@@ -482,35 +482,91 @@ class BrowserManager {
         );
       }
 
-      // 简化 UI 检查日志，只在采取行动时记录
-      try {
-        const agreeButton = this.page.locator('button:text("Agree")');
-        if (await agreeButton.isVisible({ timeout: 5000 })) {
-          this.logger.info(`[Browser] ✅ 点击 Cookie 同意横幅`);
-          await agreeButton.click({ force: true });
-          await this.page.waitForTimeout(1000);
-        }
-      } catch (error) {}
+      this.logger.info(
+        `[Browser] 进入 20秒 检查流程 (目标: Cookie + Got it + 新手引导)...`
+      );
 
-      try {
-        const gotItButton = this.page.locator('div.dialog button:text("Got it")');
-        if (await gotItButton.isVisible({ timeout: 5000 })) {
-          this.logger.info(`[Browser] ✅ 点击 "Got it" 弹窗`);
-          await gotItButton.click({ force: true });
-          await this.page.waitForTimeout(1000);
-        }
-      } catch (error) {}
+      const startTime = Date.now();
+      const timeLimit = 20000;
 
-      try {
-        const closeButton = this.page.locator('button[aria-label="Close"]');
-        if (await closeButton.isVisible({ timeout: 5000 })) {
-          this.logger.info(`[Browser] ✅ 关闭新手引导弹窗`);
-          await closeButton.click({ force: true });
-          await this.page.waitForTimeout(1000);
-        }
-      } catch (error) {}
+      // 状态记录表
+      const popupStatus = {
+        cookie: false,
+        gotIt: false,
+        guide: false,
+      };
 
-      // 移除遮罩层 (静默处理，除非数量很多)
+      while (Date.now() - startTime < timeLimit) {
+        // 如果3个都处理过了，立刻退出 ---
+        if (popupStatus.cookie && popupStatus.gotIt && popupStatus.guide) {
+          this.logger.info(
+            `[Browser] ⚡ 完美！3个弹窗全部处理完毕，提前进入下一步。`
+          );
+          break;
+        }
+
+        let clickedInThisLoop = false;
+
+        // 1. 检查 Cookie "Agree" (如果还没点过)
+        if (!popupStatus.cookie) {
+          try {
+            const agreeBtn = this.page.locator('button:text("Agree")').first();
+            if (await agreeBtn.isVisible({ timeout: 100 })) {
+              await agreeBtn.click({ force: true });
+              this.logger.info(`[Browser] ✅ (1/3) 点击了 "Cookie Agree"`);
+              popupStatus.cookie = true;
+              clickedInThisLoop = true;
+            }
+          } catch (e) {}
+        }
+
+        // 2. 检查 "Got it" (如果还没点过)
+        if (!popupStatus.gotIt) {
+          try {
+            const gotItBtn = this.page
+              .locator('div.dialog button:text("Got it")')
+              .first();
+            if (await gotItBtn.isVisible({ timeout: 100 })) {
+              await gotItBtn.click({ force: true });
+              this.logger.info(`[Browser] ✅ (2/3) 点击了 "Got it" 弹窗`);
+              popupStatus.gotIt = true;
+              clickedInThisLoop = true;
+            }
+          } catch (e) {}
+        }
+
+        // 3. 检查 新手引导 "Close" (如果还没点过)
+        if (!popupStatus.guide) {
+          try {
+            const closeBtn = this.page
+              .locator('button[aria-label="Close"]')
+              .first();
+            if (await closeBtn.isVisible({ timeout: 100 })) {
+              await closeBtn.click({ force: true });
+              this.logger.info(`[Browser] ✅ (3/3) 点击了 "新手引导关闭" 按钮`);
+              popupStatus.guide = true;
+              clickedInThisLoop = true;
+            }
+          } catch (e) {}
+        }
+
+        // 如果本轮点击了按钮，稍微等一下动画；如果没点，等待1秒避免死循环空转
+        await this.page.waitForTimeout(clickedInThisLoop ? 500 : 1000);
+      }
+
+      this.logger.info(
+        `[Browser] 弹窗检查结束 (耗时: ${Math.round(
+          (Date.now() - startTime) / 1000
+        )}s)，结果: ` +
+          `Cookie[${popupStatus.cookie ? "Ok" : "No"}], ` +
+          `GotIt[${popupStatus.gotIt ? "Ok" : "No"}], ` +
+          `Guide[${popupStatus.guide ? "Ok" : "No"}]`
+      );
+
+      this.logger.info(
+        `[Browser] 弹窗清理阶段结束，准备进入 Code 按钮点击流程。`
+      );
+
       await this.page.evaluate(() => {
         const overlays = document.querySelectorAll("div.cdk-overlay-backdrop");
         if (overlays.length > 0) {
@@ -612,6 +668,75 @@ class BrowserManager {
     this.logger.info(
       `✅ [Browser] 账号切换完成，当前账号: ${this.currentAuthIndex}`
     );
+  }
+
+  async tryDismissLaunchButton() {
+    const currentPage = this.page;
+    // 基础检查：页面必须存在且未关闭
+    if (!currentPage || currentPage.isClosed()) return;
+
+    try {
+      // 1. 强制唤醒：将页面置于前台，确保渲染优先级
+      await currentPage.bringToFront().catch(() => {});
+
+      // 2. 极速扫描：寻找符合 Y轴(400-800) 限制的 Launch 按钮
+      const targetInfo = await currentPage.evaluate(() => {
+        const candidates = Array.from(
+          document.querySelectorAll('button, span, div[role="button"], a')
+        );
+
+        for (const el of candidates) {
+          const text = el.innerText || "";
+          // 匹配 Launch 或 rocket_launch 图标文本
+          if (!/Launch|rocket_launch/i.test(text)) continue;
+
+          const rect = el.getBoundingClientRect();
+          if (rect.width === 0 || rect.height === 0) continue;
+
+          // Y轴安全区锁定 (400 - 800)，避开右上角
+          if (rect.top > 400 && rect.top < 800) {
+            return {
+              found: true,
+              x: rect.left + rect.width / 2,
+              y: rect.top + rect.height / 2,
+              text: text.substring(0, 10),
+            };
+          }
+        }
+        return { found: false };
+      });
+
+      // 3. 如果发现目标，执行“沉浸式”点击
+      if (targetInfo.found) {
+        this.logger.info(
+          `[Browser] 🛡️ 请求前置检查：发现 "${targetInfo.text}" 按钮，正在清除...`
+        );
+
+        // A. 移动鼠标到目标
+        await currentPage.mouse.move(targetInfo.x, targetInfo.y);
+
+        // B. [关键调整] 增加悬停时间 (由200ms -> 500ms)
+        await new Promise((r) => setTimeout(r, 500));
+
+        // C. 按下鼠标
+        await currentPage.mouse.down();
+
+        // D. [关键调整] 增加按压时间 (由300ms -> 600ms)
+        await new Promise((r) => setTimeout(r, 600));
+
+        // E. 抬起鼠标
+        await currentPage.mouse.up();
+
+        this.logger.info(`[Browser] 🖱️ 点击完成，等待界面响应...`);
+
+        // F. 等待按钮消失或页面刷新 (1.5秒)
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    } catch (e) {
+      this.logger.warn(
+        `[Browser] 尝试消除 Launch 按钮时出错 (非致命): ${e.message}`
+      );
+    }
   }
 }
 
@@ -1160,6 +1285,7 @@ class RequestHandler {
     const wantsStream = wantsStreamByHeader || wantsStreamByPath;
 
     try {
+      await this.browserManager.tryDismissLaunchButton();
       if (wantsStream) {
         // --- 客户端想要流式响应 ---
         this.logger.info(
@@ -1250,6 +1376,7 @@ class RequestHandler {
     const messageQueue = this.connectionRegistry.createMessageQueue(requestId);
 
     try {
+      await this.browserManager.tryDismissLaunchButton();
       this._forwardRequest(proxyRequest);
       const initialMessage = await messageQueue.dequeue();
 
@@ -3199,7 +3326,17 @@ class ProxyServerSystem extends EventEmitter {
 
     app.use(this._createAuthMiddleware());
 
-    app.get("/v1/models", (req, res) => {
+    app.get("/v1/models", async (req, res) => {
+      try {
+        // 注意：这里需要通过 this 访问 requestHandler 或 browserManager
+        // 建议直接调用 browserManager，或者通过 requestHandler 调用
+        if (this.browserManager) {
+          await this.browserManager.tryDismissLaunchButton();
+        }
+      } catch (e) {
+        this.logger.warn(`[Models] 尝试消除 Launch 按钮失败: ${e.message}`);
+      }
+
       const modelIds = this.config.modelList || ["gemini-2.5-pro"];
 
       const models = modelIds.map((id) => ({
@@ -3258,4 +3395,3 @@ if (require.main === module) {
 }
 
 module.exports = { ProxyServerSystem, BrowserManager, initializeServer };
-
