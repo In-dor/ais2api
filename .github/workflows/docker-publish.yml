@@ -8,11 +8,11 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Docker tag version (optional)'
+        description: "Docker tag version (optional)"
         required: false
         type: string
       update_latest:
-        description: 'Update latest tag'
+        description: "Update latest tag"
         required: true
         type: boolean
         default: true
@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
+        # 需要获取你手动运行时所在的分支（通常是main）
         uses: actions/checkout@v4
 
       - name: Get Camoufox Download URL
@@ -37,7 +38,6 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # --- 新增：设置一个支持缓存的 Docker Buildx 构建器 ---
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -67,6 +67,14 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             CAMOUFOX_URL=${{ env.CAMOUFOX_URL }}
-          # 缓存功能现在可以正常工作了
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # 新增步骤：如果勾选了 "update_latest"，则把刚才的镜像也打上 latest 标签
+      - name: Tag and push latest
+        # 使用 if 条件判断是否运行此步骤
+        if: github.event.inputs.update_latest == true
+        run: |
+          IMAGE_ID=$(docker inspect --format='{{.Id}}' ellinalopez/cloud-studio:${{ github.event.inputs.version }})
+          docker tag $IMAGE_ID ellinalopez/cloud-studio:latest
+          docker push ellinalopez/cloud-studio:latest

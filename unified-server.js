@@ -322,7 +322,7 @@ class BrowserManager {
     this.page = null;
     this.currentAuthIndex = 0;
     this.scriptFileName = "black-browser.js";
-    // [优化] 为低内存的Docker/云环境设置优化的启动参数
+    this.noButtonCount = 0;
     this.launchArgs = [
       "--disable-dev-shm-usage", // 关键！防止 /dev/shm 空间不足导致浏览器崩溃
       "--disable-gpu",
@@ -352,6 +352,15 @@ class BrowserManager {
       } else {
         throw new Error(`Unsupported operating system: ${platform}`);
       }
+    }
+  }
+
+  notifyUserActivity() {
+    if (this.noButtonCount > 0) {
+      this.logger.info(
+        "[Browser] ⚡ 收到用户请求信号，强制唤醒后台检测 (重置计数器)"
+      );
+      this.noButtonCount = 0;
     }
   }
 
@@ -633,6 +642,16 @@ class BrowserManager {
       await this.page.locator('button:text("Preview")').click();
       this.logger.info("[Browser] ✅ UI交互完成，脚本已开始运行。");
 
+      this.currentAuthIndex = authIndex;
+
+      // === 步骤 A: 启动后台保活监控 ===
+      // 注意：不要 await 这个方法，因为它是一个死循环
+      this._startBackgroundWakeup();
+      this.logger.info("[Browser] (后台任务) 🛡️ 监控进程初始化指令已发出...");
+      // 后台任务内部有 1500ms 的启动延迟，所以至少要等 2000ms
+      await this.page.waitForTimeout(2500);
+
+      // === 步骤 B: 发送主动唤醒请求 ===
       this.logger.info(
         "[Browser] ⚡ 正在发送主动唤醒请求以触发 Launch 流程..."
       );
@@ -658,13 +677,10 @@ class BrowserManager {
           `[Browser] 主动唤醒请求发送异常 (不影响主流程): ${e.message}`
         );
       }
-
-      this.currentAuthIndex = authIndex;
       this.logger.info("==================================================");
       this.logger.info(`✅ [Browser] 账号 ${authIndex} 的上下文初始化成功！`);
       this.logger.info("✅ [Browser] 浏览器客户端已准备就绪。");
       this.logger.info("==================================================");
-      this._startBackgroundWakeup();
     } catch (error) {
       this.logger.error(
         `❌ [Browser] 账户 ${authIndex} 的上下文初始化失败: ${error.message}`
@@ -700,16 +716,10 @@ class BrowserManager {
 
   async _startBackgroundWakeup() {
     const currentPage = this.page;
-    // 1. 启动缓冲
     await new Promise((r) => setTimeout(r, 1500));
-
     if (!currentPage || currentPage.isClosed() || this.page !== currentPage)
       return;
-
     this.logger.info("[Browser] (后台任务) 🛡️ 网页保活监控已启动");
-
-    let noButtonCount = 0;
-
     while (
       currentPage &&
       !currentPage.isClosed() &&
@@ -726,7 +736,31 @@ class BrowserManager {
 
         // --- [增强步骤 2] 智能查找 (查找文本并向上锁定可交互父级) ---
         const targetInfo = await currentPage.evaluate(() => {
-          // 定义 Y 轴安全区 (避免误触右上角)
+          // 1. 直接CSS定位
+          try {
+            const preciseCandidates = Array.from(
+              document.querySelectorAll(
+                ".interaction-modal p, .interaction-modal button"
+              )
+            );
+            for (const el of preciseCandidates) {
+              const text = (el.innerText || "").trim();
+              if (/Launch|rocket_launch/i.test(text)) {
+                const rect = el.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0) {
+                  return {
+                    found: true,
+                    x: rect.left + rect.width / 2,
+                    y: rect.top + rect.height / 2,
+                    tagName: el.tagName,
+                    text: text.substring(0, 15),
+                    strategy: "precise_css", // 标记：这是通过精准CSS找到的
+                  };
+                }
+              }
+            }
+          } catch (e) {}
+          // 2. 扫描Y轴400-800范围刻意元素
           const MIN_Y = 400;
           const MAX_Y = 800;
 
@@ -741,9 +775,8 @@ class BrowserManager {
           };
 
           // 扫描所有包含关键词的元素
-          // 使用 XPath 可能更精准，但 QuerySelectorAll 兼容性好
           const candidates = Array.from(
-            document.querySelectorAll("button, span, div, a, i") // 加入 i 标签以防图标
+            document.querySelectorAll("button, span, div, a, i")
           );
 
           for (const el of candidates) {
@@ -755,20 +788,16 @@ class BrowserManager {
             let rect = targetEl.getBoundingClientRect();
 
             // [关键优化] 如果当前元素很小或是纯文本容器，尝试向上找 3 层父级
-            // 找到那个真正的 Button 或拥有 role="button" 的容器
             let parentDepth = 0;
             while (parentDepth < 3 && targetEl.parentElement) {
-              // 如果当前元素已经是 button 或者是大的 div，可能就是它
               if (
                 targetEl.tagName === "BUTTON" ||
                 targetEl.getAttribute("role") === "button"
               ) {
                 break;
               }
-              // 否则看看父级
               const parent = targetEl.parentElement;
               const pRect = parent.getBoundingClientRect();
-              // 如果父级也在可视区，且大小合理，就暂定父级为目标（通常点击父级更稳）
               if (isValid(pRect)) {
                 targetEl = parent;
                 rect = pRect;
@@ -784,8 +813,7 @@ class BrowserManager {
                 y: rect.top + rect.height / 2,
                 tagName: targetEl.tagName,
                 text: text.substring(0, 15),
-                // 这里的 selector 仅用于日志，很难反向传回 playwright
-                className: targetEl.className,
+                strategy: "fuzzy_scan", // 标记：这是通过模糊扫描找到的
               };
             }
           }
@@ -794,11 +822,11 @@ class BrowserManager {
 
         // --- [增强步骤 3] 执行操作 ---
         if (targetInfo.found) {
-          noButtonCount = 0; // 重置计数
+          this.noButtonCount = 0;
           this.logger.info(
-            `[Browser] 🎯 锁定目标 [${targetInfo.tagName}] "${
-              targetInfo.text
-            }" @ (${Math.round(targetInfo.x)}, ${Math.round(targetInfo.y)})`
+            `[Browser] 🎯 锁定目标 [${targetInfo.tagName}] (策略: ${
+              targetInfo.strategy === "precise_css" ? "精准定位" : "模糊扫描"
+            })...`
           );
 
           // === 策略 A: 物理点击 (模拟真实鼠标) ===
@@ -816,7 +844,6 @@ class BrowserManager {
           await currentPage.mouse.up();
 
           this.logger.info(`[Browser] 🖱️ 物理点击已执行，验证结果...`);
-
           // 等待 1.5 秒看效果
           await new Promise((r) => setTimeout(r, 1500));
 
@@ -872,24 +899,27 @@ class BrowserManager {
                 }
               }
             });
-            // 再等一会
             await new Promise((r) => setTimeout(r, 2000));
           } else {
             this.logger.info(`[Browser] ✅ 物理点击成功，按钮已消失。`);
-            // 成功消除后，可以休眠久一点
             await new Promise((r) => setTimeout(r, 60000));
+            this.noButtonCount = 21;
           }
         } else {
-          // 没找到目标
-          noButtonCount++;
-          // 如果连续很多次没找到，说明页面很干净，可以降低检测频率（省CPU）
-          // 如果刚发完请求，可能需要高频检测
-          const sleepTime = noButtonCount > 20 ? 30000 : 1500;
-          await new Promise((r) => setTimeout(r, sleepTime));
+          this.noButtonCount++;
+          // 5. [关键] 智能休眠逻辑 (支持被唤醒)
+          if (this.noButtonCount > 20) {
+            for (let i = 0; i < 30; i++) {
+              if (this.noButtonCount === 0) {
+                break;
+              }
+              await new Promise((r) => setTimeout(r, 1000));
+            }
+          } else {
+            await new Promise((r) => setTimeout(r, 1500));
+          }
         }
       } catch (e) {
-        // 忽略页面刷新/上下文销毁期间的错误
-        // this.logger.debug(`[BackgroundLoop] Debug: ${e.message}`);
         await new Promise((r) => setTimeout(r, 1000));
       }
     }
@@ -1356,6 +1386,9 @@ class RequestHandler {
   }
 
   async processRequest(req, res) {
+    if (this.browserManager) {
+      this.browserManager.notifyUserActivity();
+    }
     const requestId = this._generateRequestId();
     res.on("close", () => {
       if (!res.writableEnded) {
@@ -1479,6 +1512,9 @@ class RequestHandler {
   }
 
   async processOpenAIRequest(req, res) {
+    if (this.browserManager) {
+      this.browserManager.notifyUserActivity();
+    }
     const requestId = this._generateRequestId();
     const isOpenAIStream = req.body.stream === true;
     const model = req.body.model || "gemini-1.5-pro-latest";
