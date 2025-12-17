@@ -631,7 +631,34 @@ class BrowserManager {
       await this.page.keyboard.press(isMac ? "Meta+V" : "Control+V");
       
       await this.page.locator('button:text("Preview")').click();
-      this.logger.info("[Browser] ✅ 脚本注入完成，等待运行...");
+      this.logger.info("[Browser] ✅ UI交互完成，脚本已开始运行。");
+
+      this.logger.info(
+        "[Browser] ⚡ 正在发送主动唤醒请求以触发 Launch 流程..."
+      );
+      try {
+        await this.page.evaluate(async () => {
+          try {
+            await fetch(
+              "https://generativelanguage.googleapis.com/v1beta/models?key=ActiveTrigger",
+              {
+                method: "GET",
+                headers: { "Content-Type": "application/json" },
+              }
+            );
+          } catch (e) {
+            console.log(
+              "[ProxyClient] 主动唤醒请求已发送 (预期内可能会失败，这很正常)"
+            );
+          }
+        });
+        this.logger.info("[Browser] ⚡ 主动唤醒请求已发送。");
+      } catch (e) {
+        this.logger.warn(
+          `[Browser] 主动唤醒请求发送异常 (不影响主流程): ${e.message}`
+        );
+      }
+
       this.currentAuthIndex = authIndex;
       this.logger.info("==================================================");
       this.logger.info(`✅ [Browser] 账号 ${authIndex} 的上下文初始化成功！`);
@@ -674,14 +701,12 @@ class BrowserManager {
   async _startBackgroundWakeup() {
     const currentPage = this.page;
     // 1. 启动缓冲
-    await new Promise((r) => setTimeout(r, 1000));
+    await new Promise((r) => setTimeout(r, 1500));
 
     if (!currentPage || currentPage.isClosed() || this.page !== currentPage)
       return;
 
-    this.logger.info(
-      "[Browser] (后台任务) 🛡️ 增强版保活监控已启动：主动扰动 + 智能父级定位 + 混合双打点击"
-    );
+    this.logger.info("[Browser] (后台任务) 🛡️ 网页保活监控已启动");
 
     let noButtonCount = 0;
 
@@ -852,14 +877,14 @@ class BrowserManager {
           } else {
             this.logger.info(`[Browser] ✅ 物理点击成功，按钮已消失。`);
             // 成功消除后，可以休眠久一点
-            await new Promise((r) => setTimeout(r, 5000));
+            await new Promise((r) => setTimeout(r, 60000));
           }
         } else {
           // 没找到目标
           noButtonCount++;
           // 如果连续很多次没找到，说明页面很干净，可以降低检测频率（省CPU）
           // 如果刚发完请求，可能需要高频检测
-          const sleepTime = noButtonCount > 20 ? 2000 : 500;
+          const sleepTime = noButtonCount > 20 ? 30000 : 1500;
           await new Promise((r) => setTimeout(r, sleepTime));
         }
       } catch (e) {
