@@ -161,6 +161,16 @@ class AuthSource {
       return null;
     }
   }
+
+  getMaxIndex() {
+    if (
+      !Array.isArray(this.availableIndices) ||
+      this.availableIndices.length === 0
+    ) {
+      return 0;
+    }
+    return Math.max(...this.availableIndices);
+  }
 }
 
 // ===================================================================================
@@ -1103,7 +1113,7 @@ class ConnectionRegistry extends EventEmitter {
       this.messageQueues.forEach((queue) => queue.close());
       this.messageQueues.clear();
       this.emit("connectionLost"); // 使用一个新的事件名，表示确认丢失
-    }, 10000); // 5秒的缓冲时间
+    }, 5000); // 5秒的缓冲时间
 
     this.emit("connectionRemoved", websocket);
   }
@@ -1376,9 +1386,13 @@ class RequestHandler {
 
       // [核心修改] 等待切换操作完成，并根据其结果发送不同消息
       try {
-        await this._switchToNextAuth();
-        // 如果上面这行代码没有抛出错误，说明切换/回退成功了
-        const successMessage = `🔄 目标账户无效，已自动回退至账号 #${this.currentAuthIndex}。`;
+        const switchResult = await this._switchToNextAuth();
+        let successMessage = `🔄 账号切换流程已完成，当前账号 #${this.currentAuthIndex}。`;
+        if (switchResult && switchResult.fallback) {
+          successMessage = `🔄 切换失败，已自动回退至账号 #${this.currentAuthIndex}。`;
+        } else if (switchResult && switchResult.newIndex !== undefined) {
+          successMessage = `🔄 已自动切换至账号 #${switchResult.newIndex}。`;
+        }
         this.logger.info(`[Auth] ${successMessage}`);
         if (res) this._sendErrorChunkToClient(res, successMessage);
       } catch (error) {
@@ -2237,10 +2251,9 @@ class RequestHandler {
 
       // 4. 设置正确的JSON响应头，并一次性发送处理过的全部数据
       // 如果上游没有返回 Content-Type，或者我们之前没有设置，这里显式设置为 json
+      res.status(headerMessage.status || 200);
       if (!res.get("Content-Type")) {
         res.type("application/json");
-      } else {
-        res.status(headerMessage.status || 200);
       }
       
       res.send(fullBody || "{}");
@@ -2486,7 +2499,11 @@ class RequestHandler {
     return googleRequest;
   }
 
-  _translateGoogleToOpenAIStream(googleChunk, modelName = "gemini-pro") {
+  _translateGoogleToOpenAIStream(
+    googleChunk,
+    modelName = "gemini-pro",
+    streamState = null,
+  ) {
     if (!googleChunk || googleChunk.trim() === "") {
       return null;
     }
@@ -2551,12 +2568,36 @@ class RequestHandler {
           }
         }
 
-        // 只有当有内容时才添加到 delta 中
-        if (reasoningAccumulator) {
-          delta.reasoning_content = reasoningAccumulator;
-        }
-        if (contentAccumulator) {
-          delta.content = contentAccumulator;
+        if (streamState && typeof streamState === "object") {
+          let mergedContent = "";
+
+          if (reasoningAccumulator) {
+            if (!streamState.inThought) {
+              mergedContent += "<think>\n";
+              streamState.inThought = true;
+            }
+            mergedContent += reasoningAccumulator;
+          }
+
+          if (contentAccumulator) {
+            if (streamState.inThought) {
+              mergedContent += "\n</think>\n";
+              streamState.inThought = false;
+            }
+            mergedContent += contentAccumulator;
+          }
+
+          if (mergedContent) {
+            delta.content = mergedContent;
+          }
+        } else {
+          // 兼容 fake stream / 旧客户端：分别输出 reasoning_content 和 content
+          if (reasoningAccumulator) {
+            delta.reasoning_content = reasoningAccumulator;
+          }
+          if (contentAccumulator) {
+            delta.content = contentAccumulator;
+          }
         }
       }
     }
@@ -3317,7 +3358,7 @@ class ProxyServerSystem extends EventEmitter {
                     const count = (data.status.accountStats && data.status.accountStats[acc.index]) || 0;
                     return \`<div class="account-item" style="justify-content:space-between"><div style="display:flex;align-items:center"><span class="account-idx">#\${acc.index}</span> \${acc.name}</div><span style="font-size:0.8rem;color:var(--text-light);background:#e2e8f0;padding:2px 6px;border-radius:4px;">\${count}次</span></div>\`;
                 }).join('');
-                const invalid = data.status.invalidIndices !== '[]' ? \`<div style="grid-column: 1 / -1; padding:0.75rem; color:#991b1b; background:#fee2e2; border-radius:8px; font-size:0.9rem; display:flex; align-items:center; gap:0.5rem;"><i class="ri-error-warning-line"></i> 无效索引: \${data.status.invalidIndices}</div>\` : '';
+                const invalid = data.status.invalidCount > 0 ? \`<div style="grid-column: 1 / -1; padding:0.75rem; color:#991b1b; background:#fee2e2; border-radius:8px; font-size:0.9rem; display:flex; align-items:center; gap:0.5rem;"><i class="ri-error-warning-line"></i> 无效索引: \${data.status.invalidIndices}</div>\` : '';
                 
                 document.getElementById('account-list-body').innerHTML = accounts + invalid;
 
@@ -3454,6 +3495,7 @@ class ProxyServerSystem extends EventEmitter {
             invalidIndices: `[${invalidIndices.join(", ")}] (总数: ${
               invalidIndices.length
             })`,
+            invalidCount: invalidIndices.length,
             // Stats Data
             todayUsage: statsData.today,
             dailyStats: statsData.daily,
